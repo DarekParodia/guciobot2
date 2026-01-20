@@ -22,10 +22,17 @@ export class YtDlpReadable extends Readable {
 
     this.process = spawn('yt-dlp', [
       '-f',
-      'bestaudio/best',
+      // Prefer audio formats with bitrate <= 96k, fall back to best audio
+      'bestaudio[abr<=96]/bestaudio/best',
       '--no-playlist',
       '--no-warnings',
       '--geo-bypass',
+      '--audio-format',
+      'm4a',
+      '--audio-quality',
+      '64K',
+      '--limit-rate',
+      '64K',
       '-o',
       '-',
       this.url,
@@ -34,11 +41,14 @@ export class YtDlpReadable extends Readable {
     // CORRECTION HERE:
     this.ffmpegProcess = spawn('ffmpeg', [
       '-i', 'pipe:0',          // Input from yt-dlp
+      '-vn',                   // No video
       '-ac', '2',              // Force 2 channels (Stereo)
       '-ar', '48000',          // Force 48kHz sample rate
-      '-f', 's16le',           // PCM 16-bit signed little-endian
-      '-filter:a', 'volume=0.5',
+      '-c:a', 'libopus',       // Encode to Opus
+      '-b:a', '64k',           // Target bitrate 64 kbits/s
+      '-filter:a', 'volume=0.25',
       '-loglevel', 'warning',  // Reduce log spam
+      '-f', 'opus',            // Output Opus stream
       'pipe:1'                 // Output to stdout
     ]);
 
@@ -93,14 +103,20 @@ export class YtDlpReadable extends Readable {
   }
 
   override _destroy(err: Error|null, callback: (error?: Error|null) => void) {
-    if (this.process) {
-      this.process.kill('SIGKILL');
-    }
-    if (this.ffmpegProcess) {
-      this.ffmpegProcess.kill('SIGKILL');
-    }
-    callback(err);
-  }
+  // 1. Close pipes to stop data flow
+  this.process?.stdout.unpipe();
+  this.ffmpegProcess?.stdin.end();
+
+  // 2. Kill processes
+  if (this.process && !this.process.killed) this.process.kill('SIGKILL');
+  if (this.ffmpegProcess && !this.ffmpegProcess.killed) this.ffmpegProcess.kill('SIGKILL');
+
+  // 3. Clear references for GC
+  this.process = undefined;
+  this.ffmpegProcess = undefined;
+
+  callback(err);
+}
 }
 
 export class YoutubeStream {
@@ -114,7 +130,7 @@ export class YoutubeStream {
 
   async play() {
     const resource = createAudioResource(this.ytDlpStream, {
-      inputType: StreamType.Raw,  // Oznaczamy że to raw PCM data
+      inputType: StreamType.Arbitrary,  // Let discordjs detect Opus stream
     });
     DiscordBot.player.play(resource);
   }
@@ -143,6 +159,7 @@ export async function playYoutubeStream(url: string) {
 export async function playFromFile(filePath: string) {
   if (currentStream) {
     await currentStream.stop();
+    currentStream = null;
   }
   console.log(`Playing from file: ${filePath}`);
   const resource = createAudioResource(filePath);
