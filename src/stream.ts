@@ -37,6 +37,7 @@ export class YtDlpReadable extends Readable {
       '-ac', '2',              // Force 2 channels (Stereo)
       '-ar', '48000',          // Force 48kHz sample rate
       '-f', 's16le',           // PCM 16-bit signed little-endian
+      '-filter:a', 'volume=0.5',
       '-loglevel', 'warning',  // Reduce log spam
       'pipe:1'                 // Output to stdout
     ]);
