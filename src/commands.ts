@@ -3,7 +3,7 @@ import {ChatInputCommandInteraction, SlashCommandBuilder} from 'discord.js';
 import type {SlashCommandOptionsOnlyBuilder} from 'discord.js';
 
 import {DiscordBot} from './Discord';
-import {playFromFile, playYoutubeStream} from './stream';
+import * as stream from './stream';
 
 export interface Command {
   data: SlashCommandBuilder|SlashCommandOptionsOnlyBuilder;
@@ -36,9 +36,8 @@ export const commands: Record<string, Command> = {
       // sprawdz czy typek jest na kanale i jesli tak to go pobierz
       const member = interaction.member;
       // Cast to GuildMember to access .voice
-      const channel = (member && 'voice' in member) ?
-          (member as import('discord.js').GuildMember).voice.channel :
-          null;
+      const channel = (member && 'voice' in member)?,
+            (member as import('discord.js').GuildMember).voice.channel: null;
       if (!channel) {
         interaction.editReply('Musisz być na kanale głosowym!');
         return;
@@ -46,35 +45,18 @@ export const commands: Record<string, Command> = {
 
       await DiscordBot.joinChannel(channel);
 
-
-      interaction.editReply(`Odtwarzanie piosenki! url: ${url}`);
-      await playYoutubeStream(url);
-      //   await playFromFile('test.mp4');
+      interaction.editReply(`Dodaję do kolejki url: ${url}`);
+      await stream.queueYoutubeStream(url);
     },
-  },
-  playtest: {
-    data: new SlashCommandBuilder()
-              .setName('playtest')
-              .setDescription('Odtwarza piosenkę z pliku.'),
-    execute: async (interaction) => {
-      await interaction.deferReply();
-
-      // sprawdz czy typek jest na kanale i jesli tak to go pobierz
-      const member = interaction.member;
-      // Cast to GuildMember to access .voice
-      const channel = (member && 'voice' in member) ?
-          (member as import('discord.js').GuildMember).voice.channel :
-          null;
-      if (!channel) {
-        interaction.editReply('Musisz być na kanale głosowym!');
-        return;
+    skip: {
+      data: new SlashCommandBuilder().setName('skip').setDescription(
+          'Pomija aktualnie odtwarzaną piosenkę.'),
+      execute: async (interaction) => {
+        await interaction.deferReply();
+        await stream.skipCurrentYoutubeStream();
+        interaction.editReply('Piosenka została pominięta.');
       }
-
-      await DiscordBot.joinChannel(channel);
-
-      await playFromFile('test.mp4');
-      interaction.editReply(`Odtwarzanie piosenki z pliku! path: test.mp4`);
-    },
+    }
   }
   // Add more commands here
 }

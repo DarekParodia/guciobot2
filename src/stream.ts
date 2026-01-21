@@ -6,6 +6,12 @@ import {Readable} from 'node:stream';
 import {DiscordBot} from './Discord';
 
 var currentStream: YoutubeStream|null = null;
+var streamQueue: string[] = [];
+var maxQueueSize = 15;
+var isPlaying = false;
+
+var onStartCallbacks: Array<() => void> = [];
+var onEndCallbacks: Array<() => void> = [];
 
 export class YtDlpReadable extends Readable {
   private process?: ChildProcessWithoutNullStreams;
@@ -19,11 +25,12 @@ export class YtDlpReadable extends Readable {
 
   async play() {
     console.log(`Starting yt-dlp stream for URL: ${this.url}`);
+    isPlaying = true;
 
     this.process = spawn('yt-dlp', [
       '-f',
-      // Prefer audio formats with bitrate <= 96k, fall back to best audio
-      'bestaudio[abr<=96]/bestaudio/best',
+      // Prefer audio formats with bitrate <= 64k, fall back to best audio
+      'bestaudio[abr<=64]/bestaudio/best',
       '--no-playlist',
       '--no-warnings',
       '--geo-bypass',
@@ -40,16 +47,15 @@ export class YtDlpReadable extends Readable {
 
     // CORRECTION HERE:
     this.ffmpegProcess = spawn('ffmpeg', [
-      '-i', 'pipe:0',          // Input from yt-dlp
-      '-vn',                   // No video
-      '-ac', '2',              // Force 2 channels (Stereo)
-      '-ar', '48000',          // Force 48kHz sample rate
-      '-c:a', 'libopus',       // Encode to Opus
-      '-b:a', '64k',           // Target bitrate 64 kbits/s
-      '-filter:a', 'volume=0.25',
-      '-loglevel', 'warning',  // Reduce log spam
-      '-f', 'opus',            // Output Opus stream
-      'pipe:1'                 // Output to stdout
+      '-i', 'pipe:0',     // Input from yt-dlp
+      '-vn',              // No video
+      '-ac', '2',         // Force 2 channels (Stereo)
+      '-ar', '48000',     // Force 48kHz sample rate
+      '-c:a', 'libopus',  // Encode to Opus
+      '-b:a', '64k',      // Target bitrate 64 kbits/s
+      '-filter:a', 'volume=0.25', '-loglevel', 'warning',  // Reduce log spam
+      '-f', 'opus',                                        // Output Opus stream
+      'pipe:1'                                             // Output to stdout
     ]);
 
     // NOTE: Removed '-re'.
@@ -70,6 +76,12 @@ export class YtDlpReadable extends Readable {
     this.ffmpegProcess.stdout.on('end', () => {
       console.log(`Stream ended for URL: ${this.url}`);
       this.push(null);
+
+      isPlaying = false;
+
+      for (const callback of onEndCallbacks) {
+        callback();
+      }
     });
 
     // ... (rest of your error handling remains the same) ...
@@ -96,6 +108,10 @@ export class YtDlpReadable extends Readable {
     this.ffmpegProcess.on('close', (code) => {
       if (code !== 0) console.log(`ffmpeg exited with code ${code}`);
     });
+
+    for (const callback of onStartCallbacks) {
+      callback();
+    }
   }
 
   override _read() {
@@ -103,22 +119,22 @@ export class YtDlpReadable extends Readable {
   }
 
   override _destroy(err: Error|null, callback: (error?: Error|null) => void) {
-  // 1. Close pipes to stop data flow
-  this.process?.stdout.unpipe();
-  this.ffmpegProcess?.stdin.end();
+    // 1. Close pipes to stop data flow
+    this.process?.stdout.unpipe();
+    this.ffmpegProcess?.stdin.end();
 
-  // 2. Kill processes
-  if (this.process && !this.process.killed) this.process.kill('SIGKILL');
-  if (this.ffmpegProcess && !this.ffmpegProcess.killed) this.ffmpegProcess.kill('SIGKILL');
+    // 2. Kill processes
+    if (this.process && !this.process.killed) this.process.kill('SIGKILL');
+    if (this.ffmpegProcess && !this.ffmpegProcess.killed)
+      this.ffmpegProcess.kill('SIGKILL');
 
-  // 3. Clear references for GC
-  this.process = undefined;
-  this.ffmpegProcess = undefined;
+    // 3. Clear references for GC
+    this.process = undefined;
+    this.ffmpegProcess = undefined;
 
-  callback(err);
+    callback(err);
+  }
 }
-}
-
 export class YoutubeStream {
   private url: string;
   private ytDlpStream: YtDlpReadable;
@@ -146,6 +162,29 @@ export class YoutubeStream {
   }
 }
 
+export async function queueYoutubeStream(url: string) {
+  streamQueue.push(url);
+
+  if (!isPlaying) {
+    // If this is the first item in the queue, start playing it immediately
+    await playNextYoutubeStream();
+  }
+
+  console.log(`YouTube stream queued: ${url}`);
+}
+
+export async function playNextYoutubeStream() {
+  if (streamQueue.length === 0) {
+    console.log('No more YouTube streams in the queue.');
+    return;
+  }
+
+  const nextUrl = streamQueue.shift();
+  if (nextUrl) {
+    await playYoutubeStream(nextUrl);
+  }
+}
+
 export async function playYoutubeStream(url: string) {
   if (currentStream) {
     await currentStream.stop();
@@ -156,14 +195,22 @@ export async function playYoutubeStream(url: string) {
   console.log('YouTube stream started');
 }
 
-export async function playFromFile(filePath: string) {
-  if (currentStream) {
-    await currentStream.stop();
-    currentStream = null;
-  }
-  console.log(`Playing from file: ${filePath}`);
-  const resource = createAudioResource(filePath);
-  console.log('Audio resource created');
-  DiscordBot.player.play(resource);
-  console.log('Player started playing');
+export async function addOnEndCallback(callback: () => Promise<void>) {
+  onEndCallbacks.push(callback);
 }
+
+export async function addOnStartCallback(callback: () => Promise<void>) {
+  onStartCallbacks.push(callback);
+}
+
+async function onEnd() {
+  console.log('on end callback');
+  await playNextYoutubeStream();
+}
+
+async function onStart() {
+  console.log('on start callback');
+}
+
+addOnEndCallback(onEnd);
+addOnStartCallback(onStart);
