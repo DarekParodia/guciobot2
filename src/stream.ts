@@ -13,6 +13,12 @@ var isPlaying = false;
 var onStartCallbacks: Array<() => void> = [];
 var onEndCallbacks: Array<() => void> = [];
 
+export interface YtVideo {
+  url: string;
+  title: string;
+  duration: number;
+}
+
 export class YtDlpReadable extends Readable {
   private process?: ChildProcessWithoutNullStreams;
   private ffmpegProcess?: ChildProcessWithoutNullStreams;
@@ -25,21 +31,22 @@ export class YtDlpReadable extends Readable {
 
   async play() {
     console.log(`Starting yt-dlp stream for URL: ${this.url}`);
-    isPlaying = true;
 
     this.process = spawn('yt-dlp', [
       '-f',
       // Prefer audio formats with bitrate <= 64k, fall back to best audio
-      'bestaudio[abr<=64]/bestaudio/best',
+      'bestaudio[abr<=96]/bestaudio/best',
       '--no-playlist',
       '--no-warnings',
       '--geo-bypass',
+      '--js-runtimes',
+      'bun',
       '--audio-format',
       'm4a',
       '--audio-quality',
-      '64K',
+      '96K',
       '--limit-rate',
-      '64K',
+      '96K',
       '-o',
       '-',
       this.url,
@@ -52,7 +59,7 @@ export class YtDlpReadable extends Readable {
       '-ac', '2',         // Force 2 channels (Stereo)
       '-ar', '48000',     // Force 48kHz sample rate
       '-c:a', 'libopus',  // Encode to Opus
-      '-b:a', '64k',      // Target bitrate 64 kbits/s
+      '-b:a', '96k',      // Target bitrate 64 kbits/s
       '-filter:a', 'volume=0.25', '-loglevel', 'warning',  // Reduce log spam
       '-f', 'opus',                                        // Output Opus stream
       'pipe:1'                                             // Output to stdout
@@ -65,7 +72,7 @@ export class YtDlpReadable extends Readable {
 
     this.ffmpegProcess.stdout.on('data', (chunk) => {
       // You can comment this out to reduce console spam once it works
-      console.log(`FFmpeg output: ${chunk.length} bytes`);
+      // console.log(`FFmpeg output: ${chunk.length} bytes`);
 
       // Push data to the readable stream
       // If push returns false, we should ideally pause, but for
@@ -76,12 +83,6 @@ export class YtDlpReadable extends Readable {
     this.ffmpegProcess.stdout.on('end', () => {
       console.log(`Stream ended for URL: ${this.url}`);
       this.push(null);
-
-      isPlaying = false;
-
-      for (const callback of onEndCallbacks) {
-        callback();
-      }
     });
 
     // ... (rest of your error handling remains the same) ...
@@ -109,9 +110,7 @@ export class YtDlpReadable extends Readable {
       if (code !== 0) console.log(`ffmpeg exited with code ${code}`);
     });
 
-    for (const callback of onStartCallbacks) {
-      callback();
-    }
+    triggerOnStartCallbacks();
   }
 
   override _read() {
@@ -166,6 +165,8 @@ export async function queueYoutubeStream(url: string) {
   streamQueue.push(url);
 
   if (!isPlaying) {
+    console.log("is not playing");
+    
     // If this is the first item in the queue, start playing it immediately
     await playNextYoutubeStream();
   }
@@ -195,12 +196,75 @@ export async function playYoutubeStream(url: string) {
   console.log('YouTube stream started');
 }
 
+export async function queryVideoInfo(url: string): Promise<YtVideo> {
+  return new Promise<YtVideo>((resolve, reject) => {
+    const ytDlpProcess = spawn('yt-dlp', [
+      '--no-playlist',
+      '--no-warnings',
+      '--geo-bypass',
+      '--js-runtimes',
+      'bun',
+      '-j', // Output video info in JSON
+      url,
+    ]);
+
+    let output = '';
+    ytDlpProcess.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+
+    ytDlpProcess.stderr.on('data', (data) => {
+      console.error(`yt-dlp error: ${data}`);
+    });
+
+    ytDlpProcess.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`yt-dlp exited with code ${code}`));
+        return;
+      }
+      try {
+        const info = JSON.parse(output);
+        const video: YtVideo = {
+          url: info.webpage_url,
+          title: info.title,
+          duration: info.duration,
+        };
+        resolve(video);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
+export async function getQueueSize(): Promise<Number>{
+  return streamQueue.length;
+}
+
+export async function isSteamPlaying(): Promise<Boolean>{
+  return isPlaying;
+}
+
 export async function addOnEndCallback(callback: () => Promise<void>) {
   onEndCallbacks.push(callback);
 }
 
 export async function addOnStartCallback(callback: () => Promise<void>) {
   onStartCallbacks.push(callback);
+}
+
+ async function triggerOnEndCallbacks() {
+  isPlaying = false;
+  for (const callback of onEndCallbacks) {
+    await callback();
+  }
+}
+
+ async function triggerOnStartCallbacks() {
+  isPlaying = true;
+  for (const callback of onStartCallbacks) {
+    await callback();
+  }
 }
 
 async function onEnd() {
@@ -214,3 +278,9 @@ async function onStart() {
 
 addOnEndCallback(onEnd);
 addOnStartCallback(onStart);
+
+setTimeout(() => {
+  DiscordBot.onStreamIdle(async () => {
+  await triggerOnEndCallbacks();
+});
+}, 100);

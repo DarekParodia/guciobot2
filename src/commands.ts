@@ -36,27 +36,37 @@ export const commands: Record<string, Command> = {
       // sprawdz czy typek jest na kanale i jesli tak to go pobierz
       const member = interaction.member;
       // Cast to GuildMember to access .voice
-      const channel = (member && 'voice' in member)?,
-            (member as import('discord.js').GuildMember).voice.channel: null;
+      const channel = (member && 'voice' in member)?(member as import('discord.js').GuildMember).voice.channel: null;
       if (!channel) {
         interaction.editReply('Musisz być na kanale głosowym!');
         return;
       }
 
-      await DiscordBot.joinChannel(channel);
+      if(!(await stream.isSteamPlaying()))
+        await DiscordBot.joinChannel(channel);
 
-      interaction.editReply(`Dodaję do kolejki url: ${url}`);
+      let videoInfo = await stream.queryVideoInfo(url);
       await stream.queueYoutubeStream(url);
-    },
-    skip: {
-      data: new SlashCommandBuilder().setName('skip').setDescription(
-          'Pomija aktualnie odtwarzaną piosenkę.'),
-      execute: async (interaction) => {
-        await interaction.deferReply();
-        await stream.skipCurrentYoutubeStream();
-        interaction.editReply('Piosenka została pominięta.');
-      }
+
+      interaction.editReply(`Dodaję do kolejki: **${videoInfo.title}** (${videoInfo.duration}). Piosenki w kolejce: **${await stream.getQueueSize() + 1}**.`);
+    }
+  },
+  skip: {
+    data: new SlashCommandBuilder().setName('skip').setDescription(
+        'Pomija aktualnie odtwarzaną piosenkę.'),
+    execute: async (interaction) => {
+      await interaction.deferReply();
+      await stream.playNextYoutubeStream();
+      interaction.editReply('Piosenka została pominięta.');
+    }
+  },
+  kolejka: {
+    data: new SlashCommandBuilder().setName('kolejka').setDescription(
+        'Wyświetla liczbę piosenek w kolejce.'),
+    execute: async (interaction) => {
+      const queueSize = await stream.getQueueSize();
+      interaction.reply(`Liczba piosenek w kolejce: **${queueSize}**.`);
     }
   }
-  // Add more commands here
 }
+// Add more commands here

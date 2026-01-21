@@ -8,6 +8,7 @@ class DiscordBotClass {
   private client: Client;
   public player: AudioPlayer;
   private token: string = '';
+  private onStreamIdleCallbacks: Array<() => void> = [];
 
   constructor() {
     this.client = new Client({
@@ -49,6 +50,8 @@ class DiscordBotClass {
 
     this.player.on(AudioPlayerStatus.Idle, () => {
       console.log('Audio finished playing.');
+      
+      this.onStreamIdleCallbacks.forEach(callback => callback());
       // connection.destroy(); // Uncomment to leave after playing
     });
 
@@ -145,6 +148,10 @@ class DiscordBotClass {
     } catch (error) {
       console.error('Błąd podczas rejestracji komend dla serwera:', error);
     }
+  }
+
+  async onStreamIdle(callback: () => void) {
+    this.onStreamIdleCallbacks.push(callback);
   }
 
   getClient() {
