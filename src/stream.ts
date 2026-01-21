@@ -6,7 +6,7 @@ import {Readable} from 'node:stream';
 import {DiscordBot} from './Discord';
 
 var currentStream: YoutubeStream|null = null;
-var streamQueue: string[] = [];
+var streamQueue: YtVideo[] = [];
 var maxQueueSize = 15;
 var isPlaying = false;
 
@@ -17,6 +17,7 @@ export interface YtVideo {
   url: string;
   title: string;
   duration: number;
+  durationString: string;
 }
 
 export class YtDlpReadable extends Readable {
@@ -135,19 +136,20 @@ export class YtDlpReadable extends Readable {
   }
 }
 export class YoutubeStream {
-  private url: string;
   private ytDlpStream: YtDlpReadable;
+  private videoInfo: YtVideo;
+  private resource: any;
 
-  constructor(url: string) {
-    this.url = url;
-    this.ytDlpStream = new YtDlpReadable(url);
+  constructor(video: YtVideo) {
+    this.videoInfo = video;
+    this.ytDlpStream = new YtDlpReadable(video.url);
   }
 
   async play() {
-    const resource = createAudioResource(this.ytDlpStream, {
+    this.resource = createAudioResource(this.ytDlpStream, {
       inputType: StreamType.Arbitrary,  // Let discordjs detect Opus stream
     });
-    DiscordBot.player.play(resource);
+    DiscordBot.player.play(this.resource);
   }
 
   async start() {
@@ -159,10 +161,15 @@ export class YoutubeStream {
     this.ytDlpStream.destroy();
     DiscordBot.player.stop();
   }
+
+  async getVideoInfo(): Promise<YtVideo> {
+    return this.videoInfo;
+  }
 }
 
 export async function queueYoutubeStream(url: string) {
-  streamQueue.push(url);
+  const videoInfo = await queryVideoInfo(url);
+  streamQueue.push(videoInfo);
 
   if (!isPlaying) {
     console.log("is not playing");
@@ -180,20 +187,20 @@ export async function playNextYoutubeStream() {
     return;
   }
 
-  const nextUrl = streamQueue.shift();
-  if (nextUrl) {
-    await playYoutubeStream(nextUrl);
+  const nextVideo = streamQueue.shift();
+  if (nextVideo) {
+    await playYoutubeStream(nextVideo);
   }
 }
 
-export async function playYoutubeStream(url: string) {
+export async function playYoutubeStream(video: YtVideo) {
   if (currentStream) {
     await currentStream.stop();
   }
-  console.log(`Starting YouTube stream for: ${url}`);
-  currentStream = new YoutubeStream(url);
+
+  currentStream = new YoutubeStream(video);
   await currentStream.start();
-  console.log('YouTube stream started');
+
 }
 
 export async function queryVideoInfo(url: string): Promise<YtVideo> {
@@ -228,6 +235,7 @@ export async function queryVideoInfo(url: string): Promise<YtVideo> {
           url: info.webpage_url,
           title: info.title,
           duration: info.duration,
+          durationString: info.duration_string,
         };
         resolve(video);
       } catch (err) {
@@ -239,6 +247,14 @@ export async function queryVideoInfo(url: string): Promise<YtVideo> {
 
 export async function getQueueSize(): Promise<Number>{
   return streamQueue.length;
+}
+
+export async function getQueue(): Promise<YtVideo[]>{
+  return streamQueue;
+}
+
+export async function getCurrentStream(): Promise<YoutubeStream|null>{
+  return currentStream;
 }
 
 export async function isSteamPlaying(): Promise<Boolean>{

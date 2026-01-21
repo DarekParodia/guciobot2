@@ -1,6 +1,6 @@
 
-import {ChatInputCommandInteraction, SlashCommandBuilder} from 'discord.js';
-import type {SlashCommandOptionsOnlyBuilder} from 'discord.js';
+import {ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder} from 'discord.js';
+import type {APIEmbedField, SlashCommandOptionsOnlyBuilder} from 'discord.js';
 
 import {DiscordBot} from './Discord';
 import * as stream from './stream';
@@ -48,7 +48,7 @@ export const commands: Record<string, Command> = {
       let videoInfo = await stream.queryVideoInfo(url);
       await stream.queueYoutubeStream(url);
 
-      interaction.editReply(`Dodaję do kolejki: **${videoInfo.title}** (${videoInfo.duration}). Piosenki w kolejce: **${await stream.getQueueSize() + 1}**.`);
+      interaction.editReply(`Dodaję do kolejki: **${videoInfo.title}** (${videoInfo.durationString}). Piosenki w kolejce: **${+await stream.getQueueSize() + 1}**.`);
     }
   },
   skip: {
@@ -64,8 +64,50 @@ export const commands: Record<string, Command> = {
     data: new SlashCommandBuilder().setName('kolejka').setDescription(
         'Wyświetla liczbę piosenek w kolejce.'),
     execute: async (interaction) => {
-      const queueSize = await stream.getQueueSize();
-      interaction.reply(`Liczba piosenek w kolejce: **${queueSize}**.`);
+      const queue = await stream.getQueue();
+      let fields: APIEmbedField[] = [];
+      let queueDuration = 0;
+
+      if(queue.length === 0){
+        interaction.reply('Kolejka jest pusta.');
+        return;
+      }
+
+      const currentStreaminfo = await stream.getCurrentStream().then(s => s ? s.getVideoInfo() : null);
+
+      if(currentStreaminfo){
+        fields.push({
+          name: `▶️ ${currentStreaminfo.title} (${currentStreaminfo.durationString})`,
+          inline: false,
+          value: ''
+        });
+
+        queueDuration += currentStreaminfo.duration;
+      }
+
+      for(let i=0;i<queue.length;i++){
+        if (queue[i]) {
+          fields.push({
+            name: `${queue[i]!.title} (${queue[i]!.durationString})`,
+            inline: false,
+            value: ''
+          });
+
+          queueDuration += queue[i]!.duration;
+        }
+      }
+
+      let durationHours = Math.floor(queueDuration / 3600);
+      let durationMinutes = Math.floor((queueDuration % 3600) / 60);
+      let durationSeconds = queueDuration % 60;
+
+      const queueEmbed = new EmbedBuilder()
+        .setTitle('Kolejka piosenek')
+        .setColor(0x0099FF)
+        .addFields(fields)
+        .setFooter({text: `Łączny czas trwania kolejki: ${durationHours}h ${Math.floor(durationMinutes)}m ${durationSeconds}s`});
+
+      interaction.reply({embeds: [queueEmbed]});
     }
   }
 }
