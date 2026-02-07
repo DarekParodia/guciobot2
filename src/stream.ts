@@ -18,21 +18,34 @@ export interface YtVideo {
   title: string;
   duration: number;
   durationString: string;
+  onEnd?: () => Promise<void>;
+  onStart?: () => Promise<void>;
 }
 
 export class YtDlpReadable extends Readable {
   private process?: ChildProcessWithoutNullStreams;
   private ffmpegProcess?: ChildProcessWithoutNullStreams;
-  private url: string;
+  private videoInfo: YtVideo;
 
-  constructor(url: string) {
+  constructor(videoInfo: YtVideo) {
     super();
-    this.url = url;
+    this.videoInfo = videoInfo;
+
+    let onEndTMP = async () => {
+      await this.videoInfo.onEnd?.();
+      removeOnEndCallback(onEndTMP);
+    };
+    addOnEndCallback(onEndTMP);
+
+    let onStartTMP = async () => {
+      await this.videoInfo.onStart?.();
+      removeOnStartCallback(onStartTMP);
+    };
+    addOnStartCallback(onStartTMP);
   }
 
   async play() {
-    console.log(`Starting yt-dlp stream for URL: ${this.url}`);
-
+    console.log(`Starting yt-dlp stream for URL: ${this.videoInfo.url}`);
     this.process = spawn('yt-dlp', [
       '-f',
       // Prefer audio formats with bitrate <= 64k, fall back to best audio
@@ -50,7 +63,7 @@ export class YtDlpReadable extends Readable {
       '96K',
       '-o',
       '-',
-      this.url,
+      this.videoInfo.url,
     ]);
 
     // CORRECTION HERE:
@@ -82,7 +95,7 @@ export class YtDlpReadable extends Readable {
     });
 
     this.ffmpegProcess.stdout.on('end', () => {
-      console.log(`Stream ended for URL: ${this.url}`);
+      console.log(`Stream ended for URL: ${this.videoInfo.url}`);
       this.push(null);
     });
 
@@ -142,7 +155,7 @@ export class YoutubeStream {
 
   constructor(video: YtVideo) {
     this.videoInfo = video;
-    this.ytDlpStream = new YtDlpReadable(video.url);
+    this.ytDlpStream = new YtDlpReadable(video);
   }
 
   async play() {
@@ -167,18 +180,17 @@ export class YoutubeStream {
   }
 }
 
-export async function queueYoutubeStream(url: string) {
-  const videoInfo = await queryVideoInfo(url);
+export async function queueYoutubeStream(videoInfo: YtVideo) {
   streamQueue.push(videoInfo);
 
   if (!isPlaying) {
-    console.log("is not playing");
-    
+    console.log('is not playing');
+
     // If this is the first item in the queue, start playing it immediately
     await playNextYoutubeStream();
   }
 
-  console.log(`YouTube stream queued: ${url}`);
+  console.log(`YouTube stream queued: ${videoInfo.url}`);
 }
 
 export async function playNextYoutubeStream() {
@@ -198,9 +210,9 @@ export async function playYoutubeStream(video: YtVideo) {
     await currentStream.stop();
   }
 
+  currentStream = null;
   currentStream = new YoutubeStream(video);
   await currentStream.start();
-
 }
 
 export async function queryVideoInfo(url: string): Promise<YtVideo> {
@@ -211,7 +223,7 @@ export async function queryVideoInfo(url: string): Promise<YtVideo> {
       '--geo-bypass',
       '--js-runtimes',
       'bun',
-      '-j', // Output video info in JSON
+      '-j',  // Output video info in JSON
       url,
     ]);
 
@@ -245,19 +257,19 @@ export async function queryVideoInfo(url: string): Promise<YtVideo> {
   });
 }
 
-export async function getQueueSize(): Promise<Number>{
+export async function getQueueSize(): Promise<Number> {
   return streamQueue.length;
 }
 
-export async function getQueue(): Promise<YtVideo[]>{
+export async function getQueue(): Promise<YtVideo[]> {
   return streamQueue;
 }
 
-export async function getCurrentStream(): Promise<YoutubeStream|null>{
+export async function getCurrentStream(): Promise<YoutubeStream|null> {
   return currentStream;
 }
 
-export async function isSteamPlaying(): Promise<Boolean>{
+export async function isSteamPlaying(): Promise<Boolean> {
   return isPlaying;
 }
 
@@ -269,17 +281,25 @@ export async function addOnStartCallback(callback: () => Promise<void>) {
   onStartCallbacks.push(callback);
 }
 
- async function triggerOnEndCallbacks() {
+export async function removeOnEndCallback(callback: () => Promise<void>) {
+  onEndCallbacks = onEndCallbacks.filter(cb => cb !== callback);
+}
+
+export async function removeOnStartCallback(callback: () => Promise<void>) {
+  onStartCallbacks = onStartCallbacks.filter(cb => cb !== callback);
+}
+
+async function triggerOnEndCallbacks() {
   isPlaying = false;
   for (const callback of onEndCallbacks) {
-    await callback();
+    callback();
   }
 }
 
- async function triggerOnStartCallbacks() {
+async function triggerOnStartCallbacks() {
   isPlaying = true;
   for (const callback of onStartCallbacks) {
-    await callback();
+    callback();
   }
 }
 
@@ -297,6 +317,6 @@ addOnStartCallback(onStart);
 
 setTimeout(() => {
   DiscordBot.onStreamIdle(async () => {
-  await triggerOnEndCallbacks();
-});
+    await triggerOnEndCallbacks();
+  });
 }, 100);

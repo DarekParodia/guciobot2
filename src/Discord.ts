@@ -7,6 +7,7 @@ import {commands} from './commands';
 class DiscordBotClass {
   private client: Client;
   public player: AudioPlayer;
+  public voiceChannel: VoiceBasedChannel|null = null;
   private token: string = '';
   private onStreamIdleCallbacks: Array<() => void> = [];
 
@@ -50,7 +51,7 @@ class DiscordBotClass {
 
     this.player.on(AudioPlayerStatus.Idle, () => {
       console.log('Audio finished playing.');
-      
+
       this.onStreamIdleCallbacks.forEach(callback => callback());
       // connection.destroy(); // Uncomment to leave after playing
     });
@@ -68,11 +69,13 @@ class DiscordBotClass {
   async joinChannel(channel: VoiceBasedChannel) {
     if (!channel) return;
 
+
     const connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: channel.guild.id,
       adapterCreator: channel.guild.voiceAdapterCreator,
     });
+    this.voiceChannel = channel;
 
     try {
       // Czekaj maksymalnie 30 sekund aż połączenie osiągnie stan 'Ready'

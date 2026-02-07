@@ -1,5 +1,5 @@
 
-import {ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder} from 'discord.js';
+import {ChatInputCommandInteraction, EmbedBuilder, SlashCommandBuilder} from 'discord.js';
 import type {APIEmbedField, SlashCommandOptionsOnlyBuilder} from 'discord.js';
 
 import {DiscordBot} from './Discord';
@@ -36,19 +36,44 @@ export const commands: Record<string, Command> = {
       // sprawdz czy typek jest na kanale i jesli tak to go pobierz
       const member = interaction.member;
       // Cast to GuildMember to access .voice
-      const channel = (member && 'voice' in member)?(member as import('discord.js').GuildMember).voice.channel: null;
+      const channel = (member && 'voice' in member) ?
+          (member as import('discord.js').GuildMember).voice.channel :
+          null;
       if (!channel) {
         interaction.editReply('Musisz być na kanale głosowym!');
         return;
       }
 
-      if(!(await stream.isSteamPlaying()))
+      if (!(await stream.isSteamPlaying()))
         await DiscordBot.joinChannel(channel);
 
       let videoInfo = await stream.queryVideoInfo(url);
-      await stream.queueYoutubeStream(url);
 
-      interaction.editReply(`Dodaję do kolejki: **${videoInfo.title}** (${videoInfo.durationString}). Piosenki w kolejce: **${+await stream.getQueueSize() + 1}**.`);
+      videoInfo.onStart = async () => {
+        console.log(`Now playing: ${videoInfo.title} aaaaaaaaaaaaaaa`);
+        let channelID = interaction.channelId;
+        const channel = await interaction.client.channels.fetch(channelID);
+        if (!channel || !channel.isTextBased() || channel.isDMBased()) {
+          console.warn(
+              `Nie można znaleźć kanału tekstowego o ID: ${channelID}`);
+          return;
+        }
+
+        await channel.send(`Teraz leci: **${videoInfo.title}** (${
+            videoInfo.durationString}).`);
+        // await interaction.followUp(`Teraz leci: **${videoInfo.title}** (${
+        //     videoInfo.durationString}).`);
+      };
+
+      videoInfo.onEnd = async () => {
+        console.log(`Finished playing: ${videoInfo.title}`);
+      };
+
+      stream.queueYoutubeStream(videoInfo);
+
+      interaction.editReply(`Dodaję do kolejki: **${videoInfo.title}** (${
+          videoInfo.durationString}). Piosenki w kolejce: **${
+          + await stream.getQueueSize() + 1}**.`);
     }
   },
   skip: {
@@ -68,16 +93,18 @@ export const commands: Record<string, Command> = {
       let fields: APIEmbedField[] = [];
       let queueDuration = 0;
 
-      if(queue.length === 0){
+      if (queue.length === 0) {
         interaction.reply('Kolejka jest pusta.');
         return;
       }
 
-      const currentStreaminfo = await stream.getCurrentStream().then(s => s ? s.getVideoInfo() : null);
+      const currentStreaminfo = await stream.getCurrentStream().then(
+          s => s ? s.getVideoInfo() : null);
 
-      if(currentStreaminfo){
+      if (currentStreaminfo) {
         fields.push({
-          name: `▶️ ${currentStreaminfo.title} (${currentStreaminfo.durationString})`,
+          name: `▶️ ${currentStreaminfo.title} (${
+              currentStreaminfo.durationString})`,
           inline: false,
           value: ''
         });
@@ -85,7 +112,7 @@ export const commands: Record<string, Command> = {
         queueDuration += currentStreaminfo.duration;
       }
 
-      for(let i=0;i<queue.length;i++){
+      for (let i = 0; i < queue.length; i++) {
         if (queue[i]) {
           fields.push({
             name: `${queue[i]!.title} (${queue[i]!.durationString})`,
@@ -97,18 +124,38 @@ export const commands: Record<string, Command> = {
         }
       }
 
-      let durationHours = Math.floor(queueDuration / 3600);
+      let durationHours = Math.floor(queueDuration / 3600).toFixed(0);
       let durationMinutes = Math.floor((queueDuration % 3600) / 60);
-      let durationSeconds = queueDuration % 60;
+      let durationSeconds = (queueDuration % 60).toFixed(0);
 
-      const queueEmbed = new EmbedBuilder()
-        .setTitle('Kolejka piosenek')
-        .setColor(0x0099FF)
-        .addFields(fields)
-        .setFooter({text: `Łączny czas trwania kolejki: ${durationHours}h ${Math.floor(durationMinutes)}m ${durationSeconds}s`});
+      const queueEmbed =
+          new EmbedBuilder()
+              .setTitle('Kolejka piosenek')
+              .setColor(0x0099FF)
+              .addFields(fields)
+              .setFooter({
+                text: `Łączny czas trwania kolejki: ${durationHours}h ${
+                    Math.floor(durationMinutes).toFixed(0)}m ${
+                    durationSeconds}s`
+              });
 
       interaction.reply({embeds: [queueEmbed]});
     }
-  }
+  },
+  coleci: {
+    data: new SlashCommandBuilder().setName('coleci').setDescription(
+        'Sprawdza czy aktualnie coś leci.'),
+    execute: async (interaction) => {
+      const isPlaying = await stream.isSteamPlaying();
+      if (isPlaying) {
+        const currentStreamInfo = await stream.getCurrentStream().then(
+            s => s ? s.getVideoInfo() : null);
+        interaction.reply(`Teraz leci: **${currentStreamInfo?.title}** (${
+            currentStreamInfo?.durationString}).`);
+      } else {
+        interaction.reply('Nic nie leci 3:');
+      }
+    }
+  },
 }
 // Add more commands here
