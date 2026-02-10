@@ -12,6 +12,7 @@
         "discord.js": "^14.25.1",
         "dotenv": "^17.2.3",
         "libsodium-wrappers": "^0.8.1",
+        "minecraft-server-util": "^5.4.4",
         "opusscript": "^0.1.1",
         "utf-8-validate": "^6.0.6",
         "ytdl-core": "^4.11.5",
@@ -170,6 +171,10 @@
     "magic-bytes.js": ["magic-bytes.js@1.12.1", "", {}, "sha512-ThQLOhN86ZkJ7qemtVRGYM+gRgR8GEXNli9H/PMvpnZsE44Xfh3wx9kGJaldg314v85m+bFW6WBMaVHJc/c3zA=="],
 
     "make-dir": ["make-dir@3.1.0", "", { "dependencies": { "semver": "^6.0.0" } }, "sha512-g3FeP20LNwhALb/6Cz6Dd4F2ngze0jz7tbzrD2wAV+o9FeNHe4rL+yK2md0J/fiSf1sa1ADhXqi5+oVwOM/eGw=="],
+
+    "minecraft-motd-util": ["minecraft-motd-util@1.1.12", "", {}, "sha512-5TuTRjrRupSTruea0nRC37r0FdhkS1O4wIJKAYfwJRCQd/X4Zyl/dVIs96h9UVW6N8jhIuz9pNkrDsqyN7VBdA=="],
+
+    "minecraft-server-util": ["minecraft-server-util@5.4.4", "", { "dependencies": { "minecraft-motd-util": "^1.1.9" } }, "sha512-uaE0N9PHPtJudi8BlCvKDD9K30w23ZpeS1I53wEJo9nX0HSmg5qFvwj8gMG0CYCUwWH/g5hjKaGAwXXN/vhMJw=="],
 
     "miniget": ["miniget@4.2.3", "", {}, "sha512-SjbDPDICJ1zT+ZvQwK0hUcRY4wxlhhNpHL9nJOB2MEAXRGagTljsO8MEDzQMTFf0Q8g4QNi8P9lEm/g7e+qgzA=="],
 

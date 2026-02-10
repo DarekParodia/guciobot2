@@ -1,8 +1,9 @@
 import {AudioPlayer, AudioPlayerStatus, createAudioPlayer, entersState, joinVoiceChannel, VoiceConnectionStatus} from '@discordjs/voice';
-import {Client, GatewayIntentBits, REST, Routes} from 'discord.js';
+import {ActivityType, Client, GatewayIntentBits, REST, Routes} from 'discord.js';
 import type {VoiceBasedChannel} from 'discord.js';
 
 import {commands} from './commands';
+import {MinecraftServer} from './minecraft';
 
 class DiscordBotClass {
   private client: Client;
@@ -10,6 +11,8 @@ class DiscordBotClass {
   public voiceChannel: VoiceBasedChannel|null = null;
   private token: string = '';
   private onStreamIdleCallbacks: Array<() => void> = [];
+  private minecraftServer: MinecraftServer =
+      new MinecraftServer('Guciownia', 'minecraft.darekparodia.com', 25565);
 
   constructor() {
     this.client = new Client({
@@ -20,6 +23,9 @@ class DiscordBotClass {
     this.client.once('clientReady', async () => {
       console.log(`Bot zalogowany jako ${this.client.user?.tag}`);
       await this.registerCommands();
+      await this.updateStatus();
+      setInterval(
+          () => this.updateStatus(), 60_000);  // Aktualizuj status co minutę
     });
 
     this.client.on('interactionCreate', async (interaction) => {
@@ -155,6 +161,13 @@ class DiscordBotClass {
 
   async onStreamIdle(callback: () => void) {
     this.onStreamIdleCallbacks.push(callback);
+  }
+
+  async updateStatus() {
+    const playerCount = await this.minecraftServer.getPlayerCount();
+    const statusMessage = `${playerCount} graczy na guciowni`;
+    await this.client.user?.setActivity(
+        statusMessage, {type: ActivityType.Playing});
   }
 
   getClient() {

@@ -21,6 +21,7 @@
     "discord.js": "^14.25.1",
     "dotenv": "^17.2.3",
     "libsodium-wrappers": "^0.8.1",
+    "minecraft-server-util": "^5.4.4",
     "opusscript": "^0.1.1",
     "utf-8-validate": "^6.0.6",
     "ytdl-core": "^4.11.5"
