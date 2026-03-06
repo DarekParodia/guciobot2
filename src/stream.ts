@@ -1,4 +1,5 @@
 import {createAudioResource, StreamType} from '@discordjs/voice';
+import {$} from 'bun';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import {spawn} from 'node:child_process';
 import {Readable} from 'node:stream';
@@ -60,7 +61,7 @@ export class YtDlpReadable extends Readable {
       '--audio-quality',
       '96K',
       '--limit-rate',
-      '96K',
+      '100K',
       '-o',
       '-',
       this.videoInfo.url,
@@ -271,6 +272,40 @@ export async function getCurrentStream(): Promise<YoutubeStream|null> {
 
 export async function isSteamPlaying(): Promise<Boolean> {
   return isPlaying;
+}
+
+export async function shuffleQueue() {
+  for (let i = streamQueue.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    if (streamQueue[i] !== undefined && streamQueue[j] !== undefined) {
+      [streamQueue[i], streamQueue[j]] =
+          [streamQueue[j] as YtVideo, streamQueue[i] as YtVideo];
+    }
+  }
+}
+
+export async function isPlaylist(url: string): Promise<Boolean> {
+  const result = await $`yt-dlp --flat-playlist -J ${url}`.json();
+  return result._type === 'playlist';
+}
+
+export async function getPlaylistVideos(url: string): Promise<YtVideo[]> {
+  const result = await $`yt-dlp --flat-playlist -J ${url}`.json();
+  if (result._type !== 'playlist') {
+    throw new Error('URL is not a playlist');
+  }
+
+  const videos: YtVideo[] = [];
+  for (const entry of result.entries) {
+    videos.push({
+      url: `https://www.youtube.com/watch?v=${entry.id}`,
+      title: entry.title,
+      duration: entry.duration,
+      durationString:
+          new Date(entry.duration * 1000).toISOString().substr(11, 8),
+    });
+  }
+  return videos;
 }
 
 export async function addOnEndCallback(callback: () => Promise<void>) {

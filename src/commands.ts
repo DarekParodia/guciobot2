@@ -47,33 +47,54 @@ export const commands: Record<string, Command> = {
       if (!(await stream.isSteamPlaying()))
         await DiscordBot.joinChannel(channel);
 
-      let videoInfo = await stream.queryVideoInfo(url);
+      // sprawdz se czy url to playlista i jesli tak to trzeba dodac poprostu
+      // kazda piosenke do kolejki i elo
+      let songsToAdd: stream.YtVideo[] = [];
+      if (await stream.isPlaylist(url)) {
+        // Handle playlist case
+        songsToAdd = await stream.getPlaylistVideos(url);
+      } else {
+        let videoInfo = await stream.queryVideoInfo(url);
+        songsToAdd.push(videoInfo);
+      }
 
-      videoInfo.onStart = async () => {
-        console.log(`Now playing: ${videoInfo.title} aaaaaaaaaaaaaaa`);
-        let channelID = interaction.channelId;
-        const channel = await interaction.client.channels.fetch(channelID);
-        if (!channel || !channel.isTextBased() || channel.isDMBased()) {
-          console.warn(
-              `Nie można znaleźć kanału tekstowego o ID: ${channelID}`);
-          return;
+      for (const videoInfo of songsToAdd) {
+        videoInfo.onStart = async () => {
+          console.log(`Now playing: ${videoInfo.title} aaaaaaaaaaaaaaa`);
+          let channelID = interaction.channelId;
+          const channel = await interaction.client.channels.fetch(channelID);
+          if (!channel || !channel.isTextBased() || channel.isDMBased()) {
+            console.warn(
+                `Nie można znaleźć kanału tekstowego o ID: ${channelID}`);
+            return;
+          }
+
+          await channel.send(`Teraz leci: **${videoInfo.title}** (${
+              videoInfo.durationString}).`);
+          // await interaction.followUp(`Teraz leci: **${videoInfo.title}**
+          // (${
+          //     videoInfo.durationString}).`);
+        };
+
+        videoInfo.onEnd = async () => {
+          console.log(`Finished playing: ${videoInfo.title}`);
+        };
+
+        stream.queueYoutubeStream(videoInfo);
+
+        if (songsToAdd.length === 1) {
+          interaction.editReply(`Piosenka **${
+              videoInfo
+                  .title}** została dodana do kolejki. Piosenki w kolejce: **${
+              + await stream.getQueueSize()}**.`);
         }
+        console.log(`Added to queue: ${videoInfo.title}`);
+      }
 
-        await channel.send(`Teraz leci: **${videoInfo.title}** (${
-            videoInfo.durationString}).`);
-        // await interaction.followUp(`Teraz leci: **${videoInfo.title}** (${
-        //     videoInfo.durationString}).`);
-      };
-
-      videoInfo.onEnd = async () => {
-        console.log(`Finished playing: ${videoInfo.title}`);
-      };
-
-      stream.queueYoutubeStream(videoInfo);
-
-      interaction.editReply(`Dodaję do kolejki: **${videoInfo.title}** (${
-          videoInfo.durationString}). Piosenki w kolejce: **${
-          + await stream.getQueueSize() + 1}**.`);
+      if (songsToAdd.length > 1) {
+        interaction.editReply(
+            `Piosenki z playlisty zostały dodane do kolejki.`);
+      }
     }
   },
   skip: {
@@ -157,5 +178,13 @@ export const commands: Record<string, Command> = {
       }
     }
   },
+  shuffle: {
+    data: new SlashCommandBuilder().setName('shuffle').setDescription(
+        'Tasuje kolejkę piosenek.'),
+    execute: async (interaction) => {
+      await stream.shuffleQueue();
+      interaction.reply('Kolejka została potasowana!');
+    }
+  }
 }
 // Add more commands here
