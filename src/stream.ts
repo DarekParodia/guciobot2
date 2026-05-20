@@ -19,6 +19,8 @@ export interface YtVideo {
   title: string;
   duration: number;
   durationString: string;
+  // Optional start position in seconds
+  startSeconds?: number;
   onEnd?: () => Promise<void>;
   onStart?: () => Promise<void>;
 }
@@ -69,7 +71,11 @@ export class YtDlpReadable extends Readable {
 
     // CORRECTION HERE:
     this.ffmpegProcess = spawn('ffmpeg', [
-      '-i', 'pipe:0',     // Input from yt-dlp
+      '-i', 'pipe:0',  // Input from yt-dlp
+      // Seek start time if provided (placed after -i for accuracy)
+      ...(this.videoInfo.startSeconds !== undefined ?
+              ['-ss', `${this.videoInfo.startSeconds}`] :
+              []),
       '-vn',              // No video
       '-ac', '2',         // Force 2 channels (Stereo)
       '-ar', '48000',     // Force 48kHz sample rate

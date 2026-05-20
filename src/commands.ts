@@ -5,6 +5,24 @@ import type {APIEmbedField, SlashCommandOptionsOnlyBuilder} from 'discord.js';
 import {DiscordBot} from './Discord';
 import * as stream from './stream';
 
+// Helper: parse timestamps like "1:23" or "1:02:30" or plain seconds
+function parseTimestampToSeconds(input: string): number {
+  const parts = input.split(':').map(p => p.trim());
+  if (parts.length === 1) {
+    const n = Number(parts[0]);
+    return isNaN(n) ? NaN : Math.floor(n);
+  }
+
+  // Support mm:ss or hh:mm:ss
+  let seconds = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const part = Number(parts[parts.length - 1 - i]);
+    if (isNaN(part)) return NaN;
+    seconds += part * Math.pow(60, i);
+  }
+  return Math.floor(seconds);
+}
+
 export interface Command {
   data: SlashCommandBuilder|SlashCommandOptionsOnlyBuilder;
   execute: (interaction: ChatInputCommandInteraction) => void;
@@ -24,7 +42,10 @@ export const commands: Record<string, Command> = {
               .setDescription('Odtwarza piosenkę z YouTube.')
               .addStringOption(
                   option => option.setName('url').setDescription(
-                      'URL piosenki do odtworzenia.')),
+                      'URL piosenki do odtworzenia.'))
+              .addStringOption(
+                  option => option.setName('start').setDescription(
+                      'Początkowy timestamp (np. 1:23 lub 90 sekund).')),
     execute: async (interaction) => {
       await interaction.deferReply();
       const url = interaction.options.getString('url');
@@ -55,6 +76,11 @@ export const commands: Record<string, Command> = {
         songsToAdd = await stream.getPlaylistVideos(url);
       } else {
         let videoInfo = await stream.queryVideoInfo(url);
+        const startOption = interaction.options.getString('start');
+        if (startOption) {
+          const parsed = parseTimestampToSeconds(startOption);
+          if (!isNaN(parsed) && parsed > 0) videoInfo.startSeconds = parsed;
+        }
         songsToAdd.push(videoInfo);
       }
 
