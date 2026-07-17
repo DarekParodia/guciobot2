@@ -43,6 +43,11 @@ with them rather than introducing a parallel style.
   route it through `lxc.ts`. It's inherently best-effort (the query can time
   out even when the container is healthy); callers treat a `null` result as
   "omit this info," never as an error to surface to the user.
+- `src/presence.ts`'s `collectPresenceEntries()` gathers presence sources
+  (song, Minecraft, Insurgency) independently — each one wrapped in its own
+  try/catch. If you add a new source, wrap it the same way: one source
+  failing (unreachable server, unconfigured feature) must reduce the
+  rotation by one entry, never throw and blank the whole presence.
 
 ## Config and secrets
 

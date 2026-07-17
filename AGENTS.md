@@ -1,9 +1,10 @@
 # AGENTS.md
 
 guciobot is a Discord bot (Bun + TypeScript, ESM) that plays YouTube audio
-into a voice channel via a queue, reports a Minecraft server's player count
-in its presence status, and can start/stop/status-check a Proxmox LXC
-container ("insurgency").
+into a voice channel via a queue, rotates a Discord presence status across
+whatever's currently relevant (song playing / Minecraft players / Insurgency
+players), and can start/stop/status-check a Proxmox LXC container
+("insurgency").
 
 Read **[RULES.md](./RULES.md)** before making changes — it has the actual
 coding conventions for this repo. This file is the map; RULES.md is the
@@ -77,7 +78,9 @@ src/db.ts               bun:sqlite (guciobot.sqlite, gitignored): `logs` table (
                           createLogger output, pruned to 30 days) + `insurgency_actions`
                           table (unpruned audit trail — see insurgency/audit.ts)
 src/utils.ts           shared helpers: parseTimestampToSeconds, formatDuration
-src/minecraft.ts        MinecraftServer.getPlayerCount() (used for bot presence)
+src/minecraft.ts        MinecraftServer.getPlayerCount()
+src/presence.ts          rotatePresence(client) — cycles the bot's Discord activity
+                           across song/Minecraft/Insurgency, see below
 
 src/commands/
   index.ts             the `commands` registry — add new commands here
@@ -130,6 +133,21 @@ starts a `YoutubeStream`, which spawns `yt-dlp | ffmpeg` and plays the
 resulting Opus stream through `DiscordBot.player`. When the `AudioPlayer`
 goes idle, `bot.ts` calls `queueManager.handleStreamEnd()`, which fires the
 finished video's `onEnd` callback and advances the queue.
+
+**Presence rotation** (`src/presence.ts`, driven by `bot.ts` on a
+`config.statusUpdateIntervalMs` timer): each tick, `collectPresenceEntries()`
+independently gathers whatever's currently available — the song playing
+(`queueManager.getCurrentVideo()`), Minecraft's player count
+(`MinecraftServer.getPlayerCount()`, never throws — returns 0 on failure),
+and Insurgency's player count if the container is running (`lxc.getStatus()`
++ `gameServer.queryGameServer()`, skipped entirely if Insurgency isn't
+configured or the Proxmox call fails) — then advances to the next one in
+that list. Falls back to an idle hint if literally nothing is available
+(rare, since the Minecraft entry is nearly always present). Adding a new
+presence source means adding one best-effort block to
+`collectPresenceEntries()`; a failure there must never throw past that
+block's own try/catch — one broken source should never blank the whole
+rotation.
 
 Data flow for `/start_insurgency`: check `isUserAllowed` → load
 `insurgency` config → `actions.performStart()` (checks `lxc.getStatus()`,

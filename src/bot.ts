@@ -1,12 +1,12 @@
 import {AudioPlayer, AudioPlayerStatus, createAudioPlayer, entersState, joinVoiceChannel, VoiceConnectionStatus} from '@discordjs/voice';
-import {ActivityType, Client, GatewayIntentBits, MessageFlags, Options, REST, Routes} from 'discord.js';
+import {Client, GatewayIntentBits, MessageFlags, Options, REST, Routes} from 'discord.js';
 import type {VoiceBasedChannel} from 'discord.js';
 
 import {commands} from './commands';
 import {config} from './config';
 import {handleStatusPanelButton, initStatusPanel, refreshStatusPanel} from './insurgency/statusPanel';
 import {createLogger} from './logger';
-import {MinecraftServer} from './minecraft';
+import {rotatePresence} from './presence';
 import {queueManager} from './stream';
 
 const log = createLogger('bot');
@@ -16,8 +16,6 @@ class DiscordBotClass {
   public player: AudioPlayer;
   public voiceChannel: VoiceBasedChannel|null = null;
   private token = '';
-  private minecraftServer = new MinecraftServer(
-      config.minecraft.name, config.minecraft.host, config.minecraft.port);
 
   constructor() {
     this.client = new Client({
@@ -46,8 +44,8 @@ class DiscordBotClass {
     this.client.once('clientReady', async () => {
       log.info(`Bot zalogowany jako ${this.client.user?.tag}`);
       await this.registerCommands();
-      await this.updateStatus();
-      setInterval(() => this.updateStatus(), config.statusUpdateIntervalMs);
+      await rotatePresence(this.client);
+      setInterval(() => rotatePresence(this.client), config.statusUpdateIntervalMs);
 
       // No-ops if the (optional) status panel channel isn't configured —
       // see src/insurgency/statusPanel.ts.
@@ -164,12 +162,6 @@ class DiscordBotClass {
     } catch (error) {
       log.error('Błąd podczas rejestracji komend:', error);
     }
-  }
-
-  async updateStatus() {
-    const playerCount = await this.minecraftServer.getPlayerCount();
-    await this.client.user?.setActivity(
-        `${playerCount} graczy na guciowni`, {type: ActivityType.Playing});
   }
 
   // Stops any in-flight stream and disconnects — call on process shutdown so
