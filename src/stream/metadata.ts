@@ -1,69 +1,40 @@
 import {$} from 'bun';
-import {spawn} from 'node:child_process';
 
-import {createLogger} from '../logger';
 import {formatDuration} from '../utils';
 import type {YtVideo} from './types';
 
-const log = createLogger('ytdlp');
-
-export async function queryVideoInfo(url: string): Promise<YtVideo> {
-  return new Promise<YtVideo>((resolve, reject) => {
-    const ytDlpProcess = spawn('yt-dlp', [
-      '--no-playlist',
-      '--no-warnings',
-      '--geo-bypass',
-      '--js-runtimes',
-      'bun',
-      '-j',  // Output video info as JSON
-      url,
-    ]);
-
-    let output = '';
-    ytDlpProcess.stdout.on('data', (data) => {
-      output += data.toString();
-    });
-
-    ytDlpProcess.stderr.on('data', (data) => {
-      log.error(`yt-dlp error: ${data}`);
-    });
-
-    ytDlpProcess.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(`yt-dlp exited with code ${code}`));
-        return;
-      }
-      try {
-        const info = JSON.parse(output);
-        resolve({
-          url: info.webpage_url,
-          title: info.title,
-          duration: info.duration,
-          durationString: info.duration_string ?? formatDuration(info.duration),
-        });
-      } catch (err) {
-        reject(err);
-      }
-    });
-  });
+interface FlatPlaylistEntry {
+  id: string;
+  title: string;
+  duration: number;
 }
 
-export async function isPlaylist(url: string): Promise<boolean> {
-  const result = await $`yt-dlp --flat-playlist -J ${url}`.json();
-  return result._type === 'playlist';
-}
+// Resolves a URL to one or more YtVideo entries. `--flat-playlist` is a
+// no-op for a plain video URL (yt-dlp only flattens actual playlists), so
+// one call covers both a single video and a playlist — previously this was
+// two separate yt-dlp invocations (an `isPlaylist` probe, then either
+// `queryVideoInfo` or `getPlaylistVideos`).
+//
+// `limit` caps how many entries yt-dlp even fetches/parses for a playlist,
+// instead of pulling a huge playlist fully into memory just to enqueue a
+// fraction of it. Pass `config.maxQueueSize` from call sites.
+export async function resolveVideos(url: string, limit: number): Promise<YtVideo[]> {
+  const result =
+      await $`yt-dlp --flat-playlist --playlist-end ${limit} -J ${url}`.json();
 
-export async function getPlaylistVideos(url: string): Promise<YtVideo[]> {
-  const result = await $`yt-dlp --flat-playlist -J ${url}`.json();
-  if (result._type !== 'playlist') {
-    throw new Error('URL is not a playlist');
+  if (result._type === 'playlist') {
+    return (result.entries as FlatPlaylistEntry[]).map(entry => ({
+      url: `https://www.youtube.com/watch?v=${entry.id}`,
+      title: entry.title,
+      duration: entry.duration,
+      durationString: formatDuration(entry.duration),
+    }));
   }
 
-  return (result.entries as Array<{id: string; title: string; duration: number}>)
-      .map(entry => ({
-             url: `https://www.youtube.com/watch?v=${entry.id}`,
-             title: entry.title,
-             duration: entry.duration,
-             durationString: formatDuration(entry.duration),
-           }));
+  return [{
+    url: result.webpage_url,
+    title: result.title,
+    duration: result.duration,
+    durationString: result.duration_string ?? formatDuration(result.duration),
+  }];
 }

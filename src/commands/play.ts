@@ -33,15 +33,24 @@ export const play: Command = {
     if (!queueManager.isPlaying()) await DiscordBot.joinChannel(channel);
 
     const songsToAdd = await resolveSongsToAdd(interaction, url);
+    let added = 0;
     for (const video of songsToAdd) {
-      await queueManager.enqueue(video);
+      if (await queueManager.enqueue(video)) added++;
     }
+    const skipped = songsToAdd.length - added;
 
     if (songsToAdd.length === 1) {
-      interaction.editReply(`Piosenka **${songsToAdd[0]!.title}** została dodana do kolejki. Piosenki w kolejce: **${
-          queueManager.getQueueSize()}**.`);
+      interaction.editReply(
+          added > 0 ?
+              `Piosenka **${songsToAdd[0]!.title}** została dodana do kolejki. Piosenki w kolejce: **${
+                  queueManager.getQueueSize()}**.` :
+              `Kolejka jest pełna (limit **${queueManager.getQueueSize()}** piosenek).`);
     } else {
-      interaction.editReply(`Piosenki z playlisty zostały dodane do kolejki.`);
+      interaction.editReply(
+          skipped > 0 ?
+              `Dodano **${added}** piosenek z playlisty. Pominięto **${
+                  skipped}** — kolejka jest pełna.` :
+              `Piosenki z playlisty zostały dodane do kolejki.`);
     }
   }
 };

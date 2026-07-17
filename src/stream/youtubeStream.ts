@@ -1,6 +1,7 @@
 import {createAudioResource, StreamType} from '@discordjs/voice';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import {spawn} from 'node:child_process';
+import {once} from 'node:events';
 import {Readable} from 'node:stream';
 
 import {DiscordBot} from '../bot';
@@ -10,12 +11,18 @@ import type {YtVideo} from './types';
 
 const log = createLogger('ytdlp');
 
+// Safety cap on how long waitForExit() will wait for the child processes to
+// report 'close' before giving up — SIGKILL is near-instant in practice, so
+// this should only ever bite if something is very wrong.
+const EXIT_WAIT_TIMEOUT_MS = 2_000;
+
 // Pipes yt-dlp's audio output through ffmpeg (resample + volume normalize)
 // into a readable Opus stream that @discordjs/voice can consume directly.
 class YtDlpReadable extends Readable {
   private process?: ChildProcessWithoutNullStreams;
   private ffmpegProcess?: ChildProcessWithoutNullStreams;
   private readonly video: YtVideo;
+  private exited: Promise<unknown> = Promise.resolve();
 
   constructor(video: YtVideo) {
     super();
@@ -60,11 +67,21 @@ class YtDlpReadable extends Readable {
       'pipe:1'                                             // Output to stdout
     ]);
 
+    // Resolves once both children have actually exited — see waitForExit().
+    this.exited = Promise.all(
+        [once(this.process, 'close'), once(this.ffmpegProcess, 'close')]);
+
     // Do NOT throttle ffmpeg with '-re' — let the Discord AudioPlayer handle
     // pacing itself.
     this.process.stdout.pipe(this.ffmpegProcess.stdin);
 
-    this.ffmpegProcess.stdout.on('data', (chunk) => this.push(chunk));
+    this.ffmpegProcess.stdout.on('data', (chunk) => {
+      // Respect backpressure: if the internal buffer is full, pause the
+      // source until _read() signals the consumer wants more. Without this,
+      // a stalled consumer (e.g. a voice reconnect) lets ffmpeg keep
+      // flooding an unbounded internal buffer.
+      if (!this.push(chunk)) this.ffmpegProcess?.stdout.pause();
+    });
 
     this.ffmpegProcess.stdout.on('end', () => {
       log.info(`Stream ended for URL: ${this.video.url}`);
@@ -94,7 +111,8 @@ class YtDlpReadable extends Readable {
   }
 
   override _read() {
-    // No-op — data is pushed from the child process
+    // Consumer wants more data — resume a source paused for backpressure.
+    this.ffmpegProcess?.stdout.resume();
   }
 
   override _destroy(err: Error|null, callback: (error?: Error|null) => void) {
@@ -109,6 +127,16 @@ class YtDlpReadable extends Readable {
     this.ffmpegProcess = undefined;
 
     callback(err);
+  }
+
+  // Resolves once both child processes have exited (or after a safety
+  // timeout). Call after destroy() so the caller can be sure the old
+  // pipeline is fully gone before starting a new one.
+  async waitForExit(): Promise<void> {
+    await Promise.race([
+      this.exited,
+      new Promise(resolve => setTimeout(resolve, EXIT_WAIT_TIMEOUT_MS)),
+    ]);
   }
 }
 
@@ -130,8 +158,9 @@ export class YoutubeStream {
     DiscordBot.player.play(resource);
   }
 
-  stop() {
+  async stop() {
     this.source.destroy();
     DiscordBot.player.stop();
+    await this.source.waitForExit();
   }
 }

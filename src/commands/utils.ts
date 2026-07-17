@@ -1,8 +1,9 @@
 import type {ChatInputCommandInteraction, GuildMember} from 'discord.js';
 
+import {config} from '../config';
 import {createLogger} from '../logger';
 import type {YtVideo} from '../stream';
-import {getPlaylistVideos, isPlaylist, queryVideoInfo} from '../stream';
+import {resolveVideos} from '../stream';
 import {parseTimestampToSeconds} from '../utils';
 
 const log = createLogger('commands');
@@ -21,8 +22,7 @@ export function getVoiceChannel(interaction: ChatInputCommandInteraction) {
 // option when given, and wires up the "now playing" notification.
 export async function resolveSongsToAdd(
     interaction: ChatInputCommandInteraction, url: string): Promise<YtVideo[]> {
-  const songs = await isPlaylist(url) ? await getPlaylistVideos(url) :
-                                         [await queryVideoInfo(url)];
+  const songs = await resolveVideos(url, config.maxQueueSize);
 
   if (songs.length === 1) {
     const startOption = interaction.options.getString('start');

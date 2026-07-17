@@ -35,10 +35,16 @@ export const playnext: Command = {
     const songsToAdd = await resolveSongsToAdd(interaction, url);
     // Insert in reverse so the queue keeps the songs' original order at the
     // front (each unshift pushes the previous ones back by one).
+    let added = 0;
     for (const video of [...songsToAdd].reverse()) {
-      await queueManager.enqueueNext(video);
+      if (await queueManager.enqueueNext(video)) added++;
     }
+    const skipped = songsToAdd.length - added;
 
-    interaction.editReply(`**${songsToAdd.length}** piosenka(y) została(y) dodana(y) na początek kolejki.`);
+    interaction.editReply(
+        skipped > 0 ?
+            `**${added}** piosenka(y) została(y) dodana(y) na początek kolejki. Pominięto **${
+                skipped}** — kolejka jest pełna.` :
+            `**${added}** piosenka(y) została(y) dodana(y) na początek kolejki.`);
   }
 };

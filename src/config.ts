@@ -20,8 +20,21 @@ export const config = {
     port: Number(process.env.MINECRAFT_SERVER_PORT ?? 25565),
   },
 
+  // Only required by the insurgency LXC commands (src/insurgency/) — read
+  // lazily so a bot without Proxmox configured still boots fine.
+  proxmox: {
+    // Bare hostname/IP — the proxmox-api library rejects a full URL here.
+    host: () => requireEnv('PROXMOX_HOST'),
+    port: Number(process.env.PROXMOX_PORT ?? 8006),
+    tokenId: () => requireEnv('PROXMOX_TOKEN_ID'),
+    tokenSecret: () => requireEnv('PROXMOX_TOKEN_SECRET'),
+  },
+
   statusUpdateIntervalMs: 60_000,
-  maxQueueSize: 15,
+  // Hard cap on pending (not-yet-playing) queue entries. Bounds memory from
+  // someone dropping a massive playlist URL — also used to cap how many
+  // entries yt-dlp even fetches for a playlist add, see stream/metadata.ts.
+  maxQueueSize: 100,
 
   ytDlp: {
     // Keep bitrate/rate limits conservative — this runs on modest hardware

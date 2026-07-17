@@ -1,0 +1,12 @@
+{
+  "insurgency": {
+    "proxmoxNode": "pve",
+    "containerId": 105,
+    "minFreeRamMb": 2048,
+    "allowedUserIds": ["123456789012345678"],
+    "allowSelfSignedCert": true,
+    "statusChannelId": "123456789012345678",
+    "gameServerHost": "192.168.2.20",
+    "gameServerQueryPort": 27131
+  }
+}

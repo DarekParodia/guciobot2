@@ -13,6 +13,14 @@ coverage
 .env
 *.lcov
 
+# local, host-specific configuration (see config.example.json)
+config.json
+
+# sqlite log/audit database (see src/db.ts)
+guciobot.sqlite
+guciobot.sqlite-wal
+guciobot.sqlite-shm
+
 # logs
 logs
 _.log

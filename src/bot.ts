@@ -1,9 +1,10 @@
 import {AudioPlayer, AudioPlayerStatus, createAudioPlayer, entersState, joinVoiceChannel, VoiceConnectionStatus} from '@discordjs/voice';
-import {ActivityType, Client, GatewayIntentBits, MessageFlags, REST, Routes} from 'discord.js';
+import {ActivityType, Client, GatewayIntentBits, MessageFlags, Options, REST, Routes} from 'discord.js';
 import type {VoiceBasedChannel} from 'discord.js';
 
 import {commands} from './commands';
 import {config} from './config';
+import {handleStatusPanelButton, initStatusPanel, refreshStatusPanel} from './insurgency/statusPanel';
 import {createLogger} from './logger';
 import {MinecraftServer} from './minecraft';
 import {queueManager} from './stream';
@@ -20,7 +21,25 @@ class DiscordBotClass {
 
   constructor() {
     this.client = new Client({
-      intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates]
+      intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
+      // This bot never reads message history, reactions, presences, or any
+      // of the other default-cached collections below — caching them just
+      // grows memory with server/user activity for no benefit. Guild,
+      // channel, and voice-state caches stay at their defaults since
+      // joinChannel()/getVoiceChannel() rely on them.
+      makeCache: Options.cacheWithLimits({
+        ...Options.DefaultMakeCacheSettings,
+        MessageManager: 0,
+        PresenceManager: 0,
+        ReactionManager: 0,
+        GuildEmojiManager: 0,
+        GuildStickerManager: 0,
+        GuildInviteManager: 0,
+        GuildScheduledEventManager: 0,
+        AutoModerationRuleManager: 0,
+        ThreadManager: 0,
+        ThreadMemberManager: 0,
+      }),
     });
     this.player = createAudioPlayer();
 
@@ -29,9 +48,23 @@ class DiscordBotClass {
       await this.registerCommands();
       await this.updateStatus();
       setInterval(() => this.updateStatus(), config.statusUpdateIntervalMs);
+
+      // No-ops if the (optional) status panel channel isn't configured —
+      // see src/insurgency/statusPanel.ts.
+      await initStatusPanel(this.client);
+      setInterval(() => refreshStatusPanel(), config.statusUpdateIntervalMs);
     });
 
     this.client.on('interactionCreate', async (interaction) => {
+      if (interaction.isButton()) {
+        try {
+          await handleStatusPanelButton(interaction);
+        } catch (error) {
+          log.error('Błąd podczas obsługi przycisku:', error);
+        }
+        return;
+      }
+
       if (!interaction.isChatInputCommand()) return;
 
       const command = commands[interaction.commandName];
@@ -142,7 +175,7 @@ class DiscordBotClass {
   // Stops any in-flight stream and disconnects — call on process shutdown so
   // spawned yt-dlp/ffmpeg processes and the voice connection don't linger.
   async shutdown() {
-    queueManager.shutdown();
+    await queueManager.shutdown();
     this.client.destroy();
   }
 }

@@ -1,3 +1,4 @@
+import {config} from '../config';
 import {createLogger} from '../logger';
 import type {YtVideo} from './types';
 import {YoutubeStream} from './youtubeStream';
@@ -12,16 +13,22 @@ class QueueManager {
   private current: YoutubeStream|null = null;
   private playing = false;
 
-  async enqueue(video: YtVideo) {
+  // Returns false (and drops the video) if the queue is already at
+  // `config.maxQueueSize` — bounds memory from a single huge playlist add.
+  async enqueue(video: YtVideo): Promise<boolean> {
+    if (this.queue.length >= config.maxQueueSize) return false;
     this.queue.push(video);
     log.info(`Queued: ${video.title}`);
     if (!this.playing) await this.playNext();
+    return true;
   }
 
-  async enqueueNext(video: YtVideo) {
+  async enqueueNext(video: YtVideo): Promise<boolean> {
+    if (this.queue.length >= config.maxQueueSize) return false;
     this.queue.unshift(video);
     log.info(`Queued next: ${video.title}`);
     if (!this.playing) await this.playNext();
+    return true;
   }
 
   clear() {
@@ -67,9 +74,9 @@ class QueueManager {
 
   // Stops playback and drops the queue — used on process shutdown so
   // spawned yt-dlp/ffmpeg processes don't linger.
-  shutdown() {
+  async shutdown() {
     this.queue = [];
-    this.current?.stop();
+    await this.current?.stop();
     this.current = null;
     this.playing = false;
   }
@@ -84,7 +91,10 @@ class QueueManager {
   }
 
   private async play(video: YtVideo) {
-    this.current?.stop();
+    // Wait for the previous pipeline's processes to actually exit before
+    // starting the next one — otherwise both yt-dlp/ffmpeg pairs briefly
+    // run concurrently, doubling CPU/memory for that window.
+    if (this.current) await this.current.stop();
 
     const stream = new YoutubeStream(video);
     this.current = stream;
