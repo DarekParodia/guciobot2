@@ -7,6 +7,9 @@
     "allowSelfSignedCert": true,
     "statusChannelId": "123456789012345678",
     "gameServerHost": "192.168.2.20",
-    "gameServerQueryPort": 27131
+    "gameServerQueryPort": 27131,
+    "rconHost": "192.168.2.20",
+    "rconPort": 27015,
+    "rconPassword": "changeme"
   }
 }

@@ -6,6 +6,7 @@ import {getLastAction} from './audit';
 import type {InsurgencyConfig} from './config';
 import {queryGameServer} from './gameServer';
 import type {ContainerStatus} from './lxc';
+import {queryRconPlayers} from './rcon';
 
 const STATUS_LABELS: Record<string, string> = {
   running: '🟢 Śmiga',
@@ -45,11 +46,24 @@ export async function buildStatusEmbed(
   if (running && insurgencyConfig.gameServerHost && insurgencyConfig.gameServerQueryPort) {
     const gameServerStatus = await queryGameServer(
         insurgencyConfig.gameServerHost, insurgencyConfig.gameServerQueryPort);
+
+    // A2S's numplayers is unreliable for this game (often stuck at 0), so
+    // when RCON is configured we use its "listplayers" output for the
+    // count and names instead, keeping A2S only for map/maxPlayers.
+    let rconPlayers: Awaited<ReturnType<typeof queryRconPlayers>> = null;
+    if (insurgencyConfig.rconHost && insurgencyConfig.rconPort && insurgencyConfig.rconPassword) {
+      rconPlayers = await queryRconPlayers(
+          insurgencyConfig.rconHost, insurgencyConfig.rconPort, insurgencyConfig.rconPassword);
+    }
+
     if (gameServerStatus) {
+      const numPlayers = rconPlayers ? rconPlayers.length : gameServerStatus.numPlayers;
+      const names = rconPlayers?.map(p => p.name).join(', ');
       embed.addFields({
         name: 'Gracze',
-        value: `${gameServerStatus.numPlayers} / ${gameServerStatus.maxPlayers}${
-            gameServerStatus.mapName ? ` — ${gameServerStatus.mapName}` : ''}`,
+        value: `${numPlayers} / ${gameServerStatus.maxPlayers}${
+            gameServerStatus.mapName ? ` — ${gameServerStatus.mapName}` : ''}${
+            names ? `\n${names}` : ''}`,
         inline: true,
       });
     }

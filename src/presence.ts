@@ -5,6 +5,7 @@ import {config} from './config';
 import {getInsurgencyConfig} from './insurgency/config';
 import {queryGameServer} from './insurgency/gameServer';
 import * as lxc from './insurgency/lxc';
+import {queryRconPlayers} from './insurgency/rcon';
 import {createLogger} from './logger';
 import {MinecraftServer} from './minecraft';
 import {queueManager} from './stream';
@@ -48,7 +49,13 @@ async function collectPresenceEntries(): Promise<PresenceEntry[]> {
         const gameServerStatus = await queryGameServer(
             insurgencyConfig.gameServerHost, insurgencyConfig.gameServerQueryPort);
         if (gameServerStatus) {
-          name = `Insurgency: ${gameServerStatus.numPlayers}/${gameServerStatus.maxPlayers} graczy`;
+          let numPlayers = gameServerStatus.numPlayers;
+          if (insurgencyConfig.rconHost && insurgencyConfig.rconPort && insurgencyConfig.rconPassword) {
+            const rconPlayers = await queryRconPlayers(
+                insurgencyConfig.rconHost, insurgencyConfig.rconPort, insurgencyConfig.rconPassword);
+            if (rconPlayers) numPlayers = rconPlayers.length;
+          }
+          name = `Insurgency: ${numPlayers}/${gameServerStatus.maxPlayers} graczy`;
         }
       }
       entries.push({name, type: ActivityType.Playing});

@@ -13,9 +13,17 @@ export interface InsurgencyConfig {
   statusChannelId?: string;
   // Optional, must be set together: the game server's own address/query
   // port (Source/Valve query protocol, not the Proxmox API) — enables the
-  // live player-count field. See src/insurgency/gameServer.ts.
+  // live map/max-players fields. See src/insurgency/gameServer.ts.
   gameServerHost?: string;
   gameServerQueryPort?: number;
+  // Optional, must be set together: Source RCON address/port/password
+  // (separate from gameServerQueryPort, configured in the game server's
+  // Game.ini). Used instead of the A2S query for the actual player list,
+  // since this game's A2S numplayers count is unreliable. See
+  // src/insurgency/rcon.ts.
+  rconHost?: string;
+  rconPort?: number;
+  rconPassword?: string;
 }
 
 const CONFIG_PATH = join(import.meta.dir, '..', '..', 'config.json');
@@ -72,6 +80,22 @@ export function getInsurgencyConfig(): InsurgencyConfig {
   if (hasGameServerPort && typeof c.gameServerQueryPort !== 'number') {
     throw new Error('config.json: "gameServerQueryPort" musi być liczbą.');
   }
+  const hasRconHost = c.rconHost !== undefined;
+  const hasRconPort = c.rconPort !== undefined;
+  const hasRconPassword = c.rconPassword !== undefined;
+  if (hasRconHost !== hasRconPort || hasRconHost !== hasRconPassword) {
+    throw new Error(
+        'config.json: "rconHost", "rconPort" i "rconPassword" muszą być ustawione razem.');
+  }
+  if (hasRconHost && typeof c.rconHost !== 'string') {
+    throw new Error('config.json: "rconHost" musi być stringiem.');
+  }
+  if (hasRconPort && typeof c.rconPort !== 'number') {
+    throw new Error('config.json: "rconPort" musi być liczbą.');
+  }
+  if (hasRconPassword && typeof c.rconPassword !== 'string') {
+    throw new Error('config.json: "rconPassword" musi być stringiem.');
+  }
 
   cached = {
     proxmoxNode: String(c.proxmoxNode),
@@ -82,6 +106,9 @@ export function getInsurgencyConfig(): InsurgencyConfig {
     statusChannelId: c.statusChannelId as string | undefined,
     gameServerHost: c.gameServerHost as string | undefined,
     gameServerQueryPort: c.gameServerQueryPort as number | undefined,
+    rconHost: c.rconHost as string | undefined,
+    rconPort: c.rconPort as number | undefined,
+    rconPassword: c.rconPassword as string | undefined,
   };
   return cached;
 }

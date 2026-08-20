@@ -1,4 +1,5 @@
 import {clearlist} from './clearlist';
+import {losowanie} from './losowanie';
 import {nowplaying} from './nowplaying';
 import {ping} from './ping';
 import {play} from './play';
@@ -27,4 +28,5 @@ export const commands: Record<string, Command> = {
   start_insurgency: startInsurgency,
   stop_insurgency: stopInsurgency,
   status_insurgency: statusInsurgency,
+  losowanie,
 };
