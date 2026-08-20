@@ -158,8 +158,6 @@ function buildComponents(state: DraftState, modeOptions: string[]) {
 
   if (state.players.length === 0) {
     rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId('losowanie_roll_map').setLabel('🔁 Losuj mapę ponownie').setStyle(
-            ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('losowanie_add_players').setLabel('👥 Dodaj graczy →').setStyle(
             ButtonStyle.Primary),
     ));
@@ -168,8 +166,6 @@ function buildComponents(state: DraftState, modeOptions: string[]) {
 
   if (state.attackTeam === null) {
     rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId('losowanie_add_players').setLabel('🔁 Losuj drużyny ponownie').setStyle(
-            ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('losowanie_roll_attack').setLabel('⚔️ Losuj atak →').setStyle(
             ButtonStyle.Primary),
     ));
@@ -177,8 +173,6 @@ function buildComponents(state: DraftState, modeOptions: string[]) {
   }
 
   rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId('losowanie_roll_attack').setLabel('🔁 Losuj atak ponownie').setStyle(
-          ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('losowanie_start_match').setLabel('✅ Rozpocznij mecz').setStyle(
           ButtonStyle.Success),
   ));
@@ -250,8 +244,7 @@ export const losowanie: Command = {
           await handleRollAttack(i, message, state, modeOptions);
         } else if (i.isButton() && i.customId === 'losowanie_start_match') {
           await handleStartMatch(
-              i, message, state, modeOptions, insurgencyConfig.allowedUserIds, rconHost, rconPort,
-              rconPassword);
+              i, message, state, insurgencyConfig.allowedUserIds, rconHost, rconPort, rconPassword);
           if (state.started) collector.stop();
         }
       } catch (err) {
@@ -352,8 +345,8 @@ async function handleRollAttack(i: ButtonInteraction, message: Message, state: D
 }
 
 async function handleStartMatch(
-    i: ButtonInteraction, message: Message, state: DraftState, modeOptions: string[], allowedUserIds: string[],
-    rconHost: string, rconPort: number, rconPassword: string) {
+    i: ButtonInteraction, message: Message, state: DraftState, allowedUserIds: string[], rconHost: string,
+    rconPort: number, rconPassword: string) {
   if (!isUserAllowed(i.user.id, allowedUserIds)) {
     await i.reply({content: 'Nie masz uprawnień żeby startować meczu na serwerze.', ephemeral: true});
     return;
@@ -373,13 +366,53 @@ async function handleStartMatch(
     return;
   }
 
-  const attackLabel = state.attackTeam === 1 ? 'Team 1' : 'Team 2';
-  const defenseLabel = state.attackTeam === 1 ? 'Team 2' : 'Team 1';
-  const announcement = `Mecz: ${state.mapResult.map} (${state.mapResult.scenario.modeLabel}, ${
-      state.lighting === 'Night' ? 'noc' : 'dzień'}) — Atak: ${attackLabel}, Obrona: ${
-      defenseLabel}. Team 1: ${state.team1.join(', ')}. Team 2: ${state.team2.join(', ')}.`;
-  await execRconCommand(rconHost, rconPort, rconPassword, `say ${announcement}`);
+  await message.edit({
+    embeds: [buildEmbed(state).setDescription('⏳ Ładowanie mapy na serwerze...')],
+    components: [],
+  });
+
+  const attackNames = state.attackTeam === 1 ? state.team1 : state.team2;
+  const defenseNames = state.attackTeam === 1 ? state.team2 : state.team1;
+  const lightingLabel = state.lighting === 'Night' ? 'Noc' : 'Dzien';
+  // Short, plain-ASCII-punctuation lines sent as separate `say` calls: one
+  // long line of em-dashes/emoji reads as a wall of text in the in-game
+  // chat window (narrow, no wrapping control, and the game's font doesn't
+  // render most non-Latin symbols), so this mirrors how server admins
+  // normally post multi-line announcements.
+  const lines = [
+    `=== MECZ: ${state.mapResult.map} - ${state.mapResult.scenario.modeLabel} (${lightingLabel}) ===`,
+    `ATAK: ${attackNames.join(', ')}`,
+    `OBRONA: ${defenseNames.join(', ')}`,
+  ];
+
+  // The level reload takes several seconds, during which the game doesn't
+  // route console/RCON `say` into chat (and can briefly refuse new RCON
+  // connections outright) — sending immediately after `travelscenario`
+  // silently drops the message. Wait for the map to come up, then retry the
+  // whole announcement a few times in case the server is still loading.
+  await Bun.sleep(8000);
+  let announced = false;
+  for (let attempt = 0; attempt < 4 && !announced; attempt++) {
+    announced = true;
+    for (const line of lines) {
+      const result = await execRconCommand(rconHost, rconPort, rconPassword, `say ${line}`);
+      if (result === null) {
+        announced = false;
+        break;
+      }
+      await Bun.sleep(300);
+    }
+    if (!announced) await Bun.sleep(3000);
+  }
 
   state.started = true;
-  await render(message, state, modeOptions);
+  const finalEmbed = buildEmbed(state);
+  if (!announced) {
+    finalEmbed.addFields({
+      name: '⚠️ Uwaga',
+      value: 'Mapa została zmieniona, ale ogłoszenie na czacie serwera nie dotarło (RCON nie odpowiadał).',
+      inline: false,
+    });
+  }
+  await message.edit({embeds: [finalEmbed], components: []});
 }
