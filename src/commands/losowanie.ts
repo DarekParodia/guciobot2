@@ -36,15 +36,28 @@ function canonicalMode(modeLabel: string): string {
   return mode;
 }
 
+// Push/Checkpoint scenarios bake the attacking faction into their name
+// (e.g. "Push Insurgents" = Insurgents attack) — everything else (Ambush,
+// Domination, Firefight, ...) has no fixed attacker.
+function attackingFaction(modeLabel: string): 'Security'|'Insurgents'|null {
+  if (modeLabel.endsWith('Insurgents')) return 'Insurgents';
+  if (modeLabel.endsWith('Security')) return 'Security';
+  return null;
+}
+
 interface DraftState {
   excludedMaps: Set<MapName>;
   mode: string|null;  // null = any mode
   lighting: Lighting;
   mapResult: {map: MapName; scenario: Scenario}|null;
   players: string[];
-  team1: string[];
-  team2: string[];
-  attackTeam: 1|2|null;
+  groupA: string[];
+  groupB: string[];
+  // Which random group got the Security faction; the other gets
+  // Insurgents. null = not rolled yet. The game auto-assigns players to
+  // in-game teams itself (bAutoAssignTeams), so this is a suggestion for
+  // players to self-organize by, not something the bot can enforce.
+  securityGroup: 'A'|'B'|null;
   started: boolean;
 }
 
@@ -55,9 +68,9 @@ function newState(): DraftState {
     lighting: 'Day',
     mapResult: null,
     players: [],
-    team1: [],
-    team2: [],
-    attackTeam: null,
+    groupA: [],
+    groupB: [],
+    securityGroup: null,
     started: false,
   };
 }
@@ -88,20 +101,26 @@ function buildEmbed(state: DraftState): EmbedBuilder {
   });
 
   if (state.players.length > 0) {
-    const label = (name: string, team: 1|2) =>
-        state.attackTeam === team ? `🔴 ${name}` : state.attackTeam ? `🫒 ${name}` : name;
-    embed.addFields(
-        {
-          name: `» AO-03 — Team 1${state.attackTeam === 1 ? ' (Atak)' : state.attackTeam === 2 ? ' (Obrona)' : ''}`,
-          value: state.team1.length ? state.team1.map(n => label(n, 1)).join('\n') : '—',
-          inline: true,
-        },
-        {
-          name: `» AO-03 — Team 2${state.attackTeam === 2 ? ' (Atak)' : state.attackTeam === 1 ? ' (Obrona)' : ''}`,
-          value: state.team2.length ? state.team2.map(n => label(n, 2)).join('\n') : '—',
-          inline: true,
-        },
-    );
+    if (state.securityGroup === null) {
+      embed.addFields(
+          {name: '» AO-03 — Grupa A', value: state.groupA.join('\n') || '—', inline: true},
+          {name: '» AO-03 — Grupa B', value: state.groupB.join('\n') || '—', inline: true},
+      );
+    } else {
+      const security = state.securityGroup === 'A' ? state.groupA : state.groupB;
+      const insurgents = state.securityGroup === 'A' ? state.groupB : state.groupA;
+      const attacker = state.mapResult ? attackingFaction(state.mapResult.scenario.modeLabel) : null;
+      const tag = (faction: 'Security'|'Insurgents') =>
+          attacker === faction ? ' (Atak)' : attacker ? ' (Obrona)' : '';
+      embed.addFields(
+          {name: `» AO-03 — 🟦 Security${tag('Security')}`, value: security.join('\n') || '—', inline: true},
+          {
+            name: `» AO-03 — 🟥 Insurgents${tag('Insurgents')}`,
+            value: insurgents.join('\n') || '—',
+            inline: true,
+          },
+      );
+    }
   }
 
   if (state.started) {
@@ -164,9 +183,9 @@ function buildComponents(state: DraftState, modeOptions: string[]) {
     return rows;
   }
 
-  if (state.attackTeam === null) {
+  if (state.securityGroup === null) {
     rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId('losowanie_roll_attack').setLabel('⚔️ Losuj atak →').setStyle(
+        new ButtonBuilder().setCustomId('losowanie_roll_factions').setLabel('🎖️ Losuj frakcje →').setStyle(
             ButtonStyle.Primary),
     ));
     return rows;
@@ -185,7 +204,7 @@ async function render(message: Message, state: DraftState, modeOptions: string[]
 
 export const losowanie: Command = {
   data: new SlashCommandBuilder().setName('losowanie').setDescription(
-      'Odprawa operacyjna: losuje mapę, drużyny i stronę atakującą przed meczem.'),
+      'Odprawa operacyjna: losuje mapę, tryb i przydział frakcji (Security/Insurgents) przed meczem.'),
   execute: async (interaction) => {
     let insurgencyConfig;
     try {
@@ -240,8 +259,8 @@ export const losowanie: Command = {
           await handleRollMap(i, message, state, modeOptions, scenariosByMap);
         } else if (i.isButton() && i.customId === 'losowanie_add_players') {
           await handleAddPlayers(i, message, state, modeOptions);
-        } else if (i.isButton() && i.customId === 'losowanie_roll_attack') {
-          await handleRollAttack(i, message, state, modeOptions);
+        } else if (i.isButton() && i.customId === 'losowanie_roll_factions') {
+          await handleRollFactions(i, message, state, modeOptions);
         } else if (i.isButton() && i.customId === 'losowanie_start_match') {
           await handleStartMatch(
               i, message, state, insurgencyConfig.allowedUserIds, rconHost, rconPort, rconPassword);
@@ -329,18 +348,18 @@ async function handleAddPlayers(i: ButtonInteraction, message: Message, state: D
   }
 
   state.players = players;
-  state.attackTeam = null;
+  state.securityGroup = null;
   const shuffledPlayers = shuffled(players);
-  state.team1 = shuffledPlayers.filter((_, idx) => idx % 2 === 0);
-  state.team2 = shuffledPlayers.filter((_, idx) => idx % 2 === 1);
+  state.groupA = shuffledPlayers.filter((_, idx) => idx % 2 === 0);
+  state.groupB = shuffledPlayers.filter((_, idx) => idx % 2 === 1);
 
   await submitted.deferUpdate();
   await render(message, state, modeOptions);
 }
 
-async function handleRollAttack(i: ButtonInteraction, message: Message, state: DraftState, modeOptions: string[]) {
+async function handleRollFactions(i: ButtonInteraction, message: Message, state: DraftState, modeOptions: string[]) {
   await i.deferUpdate();
-  state.attackTeam = Math.random() < 0.5 ? 1 : 2;
+  state.securityGroup = Math.random() < 0.5 ? 'A' : 'B';
   await render(message, state, modeOptions);
 }
 
@@ -371,8 +390,11 @@ async function handleStartMatch(
     components: [],
   });
 
-  const attackNames = state.attackTeam === 1 ? state.team1 : state.team2;
-  const defenseNames = state.attackTeam === 1 ? state.team2 : state.team1;
+  const security = state.securityGroup === 'A' ? state.groupA : state.groupB;
+  const insurgents = state.securityGroup === 'A' ? state.groupB : state.groupA;
+  const attacker = attackingFaction(state.mapResult.scenario.modeLabel);
+  const suffix = (faction: 'Security'|'Insurgents') =>
+      attacker === faction ? ' [ATAK]' : attacker ? ' [OBRONA]' : '';
   const lightingLabel = state.lighting === 'Night' ? 'Noc' : 'Dzien';
   // Short, plain-ASCII-punctuation lines sent as separate `say` calls: one
   // long line of em-dashes/emoji reads as a wall of text in the in-game
@@ -381,18 +403,18 @@ async function handleStartMatch(
   // normally post multi-line announcements.
   const lines = [
     `=== MECZ: ${state.mapResult.map} - ${state.mapResult.scenario.modeLabel} (${lightingLabel}) ===`,
-    `ATAK: ${attackNames.join(', ')}`,
-    `OBRONA: ${defenseNames.join(', ')}`,
+    `SECURITY${suffix('Security')}: ${security.join(', ')}`,
+    `INSURGENTS${suffix('Insurgents')}: ${insurgents.join(', ')}`,
   ];
 
-  // The level reload takes several seconds, during which the game doesn't
-  // route console/RCON `say` into chat (and can briefly refuse new RCON
-  // connections outright) — sending immediately after `travelscenario`
-  // silently drops the message. Wait for the map to come up, then retry the
-  // whole announcement a few times in case the server is still loading.
-  await Bun.sleep(8000);
+  // The level reload takes a while, during which the game doesn't route
+  // console/RCON `say` into chat (and can briefly refuse new RCON
+  // connections outright) — sending too soon after `travelscenario`
+  // silently drops the message. Wait for the map to fully come up, then
+  // retry the whole announcement a few times in case it's still loading.
+  await Bun.sleep(20000);
   let announced = false;
-  for (let attempt = 0; attempt < 4 && !announced; attempt++) {
+  for (let attempt = 0; attempt < 5 && !announced; attempt++) {
     announced = true;
     for (const line of lines) {
       const result = await execRconCommand(rconHost, rconPort, rconPassword, `say ${line}`);
@@ -402,7 +424,7 @@ async function handleStartMatch(
       }
       await Bun.sleep(300);
     }
-    if (!announced) await Bun.sleep(3000);
+    if (!announced) await Bun.sleep(5000);
   }
 
   state.started = true;
