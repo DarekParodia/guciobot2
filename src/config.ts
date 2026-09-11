@@ -30,6 +30,14 @@ export const config = {
     tokenSecret: () => requireEnv('PROXMOX_TOKEN_SECRET'),
   },
 
+  // HTTP management API (src/api/). Binds to localhost by default on
+  // purpose — the API has no authentication, so widening the bind via
+  // API_HOST=0.0.0.0 is a deployment decision for trusted LANs only.
+  api: {
+    host: process.env.API_HOST ?? '127.0.0.1',
+    port: Number(process.env.API_PORT ?? 8787),
+  },
+
   statusUpdateIntervalMs: 60_000,
   // Hard cap on pending (not-yet-playing) queue entries. Bounds memory from
   // someone dropping a massive playlist URL — also used to cap how many

@@ -129,6 +129,24 @@ with them rather than introducing a parallel style.
   `NODE_EXTRA_CA_CERTS` so no bypass is needed at all — prefer that if
   you're ever revisiting this.
 
+## HTTP API (src/api/)
+
+- Every API endpoint must be documented in `docs/API.md` and in the OpenAPI
+  spec (`src/api/openapi.ts`, served at `GET /api/openapi.json`) in the same
+  change that adds or modifies it. Docs are part of the feature — an
+  undocumented endpoint is an incomplete change.
+- Routes live in `src/api/` as small Hono sub-apps, one domain per file,
+  mounted in `src/api/index.ts`. Handlers stay thin: validate input, call
+  `queueManager`/`DiscordBot`, serialize the result. Business logic belongs
+  in its owning module (same split as slash commands).
+- Responses are JSON. Errors are `{"error": "<message>"}` with a real status
+  code: 400 validation, 404 unknown route, 409 conflicting state, 502 failed
+  voice join, 500 unexpected. Error copy is Polish (user-facing); everything
+  else in the API layer is English.
+- The API has no authentication and binds to 127.0.0.1 by default on
+  purpose. Exposing it via `API_HOST=0.0.0.0` is a deployment decision, not
+  a default — don't widen the bind casually.
+
 ## Adding a command
 
 1. Create `src/commands/<name>.ts` exporting a `Command`.

@@ -52,6 +52,9 @@ All read through `src/config.ts`:
 - `PROXMOX_HOST` / `PROXMOX_PORT` / `PROXMOX_TOKEN_ID` / `PROXMOX_TOKEN_SECRET`
   — optional, only needed for the insurgency commands. `PROXMOX_HOST` is a
   bare hostname/IP (no scheme, no port).
+- `API_HOST` / `API_PORT` — optional, HTTP management API bind address/port
+  (defaults `127.0.0.1`:`8787`). No auth — keep it off untrusted networks.
+  See `docs/API.md`.
 
 `.env` is gitignored; copy your token in locally, never commit it.
 
@@ -99,6 +102,15 @@ src/stream/
   metadata.ts             resolveVideos(url, limit): one yt-dlp call, handles
                             both single videos and playlists (capped by `limit`)
   types.ts                 YtVideo interface
+
+src/api/
+  index.ts             Hono app + Bun.serve startup (API_HOST/API_PORT):
+                         /api/health, /api/openapi.json, JSON 404/500 handling
+  music.ts              /api/music/* — nowplaying, queue, play, playnext,
+                          skip, shuffle, clear, pause, resume (thin handlers
+                          over queueManager/DiscordBot)
+  openapi.ts            hand-written OpenAPI 3.1 spec served at
+                          /api/openapi.json
 
 src/insurgency/
   config.ts             loads/validates config.json's "insurgency" section (lazy)
@@ -189,6 +201,17 @@ over UDP (Source/Valve query protocol via the `gamedig` package, type
 `insurgencysandstorm`), completely separate from the Proxmox API. It's a
 best-effort field: an unreachable/misconfigured query port just means the
 "Gracze" field is omitted, not an error shown to the user.
+
+**HTTP API** (`src/api/`, a Hono app served with `Bun.serve` on
+`API_HOST`:`API_PORT`, default `127.0.0.1`:`8787`): mirrors the music slash
+commands (`/play`, `/playnext`, `/skip`, `/kolejka`, `/coleci`, `/shuffle`,
+`/clearlist`, plus pause/resume) over HTTP, with thin handlers calling the
+same `queueManager`/`DiscordBot` primitives the commands use. It starts
+automatically with the bot and logs its URL on startup. There is no
+authentication — it binds to localhost by default on purpose; exposing it
+wider is a deployment decision, not a default. `docs/API.md` is the
+endpoint reference and must be kept in sync with any API change, per
+RULES.md.
 
 ## Slash commands
 

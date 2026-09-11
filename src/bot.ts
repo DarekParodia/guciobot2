@@ -126,6 +126,18 @@ class DiscordBotClass {
     }
   }
 
+  // Resolves a channel ID to a voice channel the bot could join, or null if
+  // the ID doesn't point at a joinable voice channel. Used by the HTTP API
+  // (src/api/), which has no invoking member to derive a channel from.
+  async fetchVoiceChannel(channelId: string): Promise<VoiceBasedChannel|null> {
+    try {
+      const channel = await this.client.channels.fetch(channelId);
+      return channel?.isVoiceBased() ? channel : null;
+    } catch {
+      return null;
+    }
+  }
+
   async registerCommands() {
     if (!this.client.application) {
       log.error('Client application nie jest dostępny.');
