@@ -10,6 +10,7 @@ import type {Command} from './types';
 const MAX_ATTACHMENT_SIZE = 9.5 * 1000000;
 const ACCEPTABLE_MARGIN = 1.0 * 1000000;
 const BITS_PER_PIXEL = 8;
+const DEFAULT_FPS = 15;
 
 function estimateGifSize(
     width: number, height: number, bitsppx: number, Frames: number):
@@ -45,10 +46,19 @@ function downloadImage(imageUrl: string):
     }
 
 function getGif(
-    inputBuffer: Buffer, FPS: number, width: number, colors: number):
+    inputBuffer: Buffer, FPS: number, width: number, colors: number,
+    singleFrame: boolean):
     Promise<Buffer> {
       return new Promise((resolve, reject) => {
-        const ffmpeg = spawn('ffmpeg', [
+        const ffmpegArgs = [
+          ...(singleFrame ?
+                  [
+                    '-f',
+                    'image2pipe',
+                    '-framerate',
+                    '1',
+                  ] :
+                  []),
           '-i',
           'pipe:0',
           '-filter_complex',
@@ -57,8 +67,11 @@ function getGif(
               colors}[colors];[main][colors]paletteuse`,
           '-f',
           'gif',
+          ...(singleFrame ? ['-t', '1'] : []),
+          ...(singleFrame ? ['-frames:v', '1'] : []),
           'pipe:1',
-        ]);
+        ];
+        const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
         const outputChunks: Buffer[] = [];
 
@@ -103,7 +116,7 @@ export const togif: Command = {
     let fps = interaction.options.getNumber('fps')
 
     if (!fps) {
-      fps = 15;
+      fps = DEFAULT_FPS;
     }
 
     if (!attachment || !attachment.width || !attachment.height) {
@@ -115,7 +128,8 @@ export const togif: Command = {
       return;
     }
 
-    if (attachment.contentType?.startsWith('image')) {
+    const isImage = attachment.contentType?.startsWith('image') ?? false;
+    if (isImage) {
       fps = 1;
     }
     // console.log(attachment);
@@ -135,7 +149,7 @@ export const togif: Command = {
 
     // try downlaoding the image
     await interaction.deferReply();
-    console.log('awaiting');
+    await interaction.editReply('Generuję gifa, chwileczkę...');
 
     try {
       let url = attachment.url;
@@ -155,7 +169,8 @@ export const togif: Command = {
         let candidate: Buffer<ArrayBufferLike>;
 
         try {
-          candidate = await getGif(imageData, fps, width, 2 ** BITS_PER_PIXEL);
+          candidate =
+              await getGif(imageData, fps, width, 2 ** BITS_PER_PIXEL, isImage);
         } catch (error) {
           console.error(
               `GIF generation failed at scale ${targetScale}:`, error);
@@ -189,31 +204,32 @@ export const togif: Command = {
       }
 
       if (!outputBuffer) {
-        interaction.editReply('eror');
+        await interaction.editReply(
+            'Nie udało się zmieścić gifa w limicie 10MB. Spróbuj z krótszym lub mniejszym plikiem.');
         return
       }
 
-      interaction.editReply(`Gif Size: ${
-          outputBuffer.length /
-          1000000}MB, Input Size: ${imageData.length / 1000000}MB`);
-
       if (outputBuffer.length > MAX_ATTACHMENT_SIZE) {
-        console.log('Za duze 3:');
-
-      } else {
-        console.log('Creating attachment');
-
-        const replyAttachment = new AttachmentBuilder(
-            outputBuffer, {name: `${attachment.name}.gif`});
-
-        await interaction.editReply({files: [replyAttachment]})
-
-        console.log('Attachment done');
+        console.error(
+            'Gif przekracza limit rozmiaru mimo wyszukiwania skali:',
+            outputBuffer.length);
+        await interaction.editReply(
+            'Nie udało się zmieścić gifa w limicie 10MB. Spróbuj z krótszym lub mniejszym plikiem.');
+        return;
       }
 
+      const replyAttachment =
+          new AttachmentBuilder(outputBuffer, {name: `${attachment.name}.gif`});
+
+      await interaction.editReply({
+        content: `Gotowe! (${(outputBuffer.length / 1000000).toFixed(1)}MB)`,
+        files: [replyAttachment],
+      });
+
     } catch (e) {
-      interaction.editReply('eror');
-      console.log(e);
+      console.error('Błąd podczas generowania gifa:', e);
+      await interaction.editReply(
+          'Wystąpił błąd podczas generowania gifa. Spróbuj ponownie później.');
     }
   },
 };
