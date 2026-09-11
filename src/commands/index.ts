@@ -10,12 +10,13 @@ import {skip} from './skip';
 import {startInsurgency} from './startInsurgency';
 import {statusInsurgency} from './statusInsurgency';
 import {stopInsurgency} from './stopInsurgency';
+import {togif} from './togif';
 import type {Command} from './types';
 
 export type {Command} from './types';
 
-// Keyed by slash command name. To add a command: create a `src/commands/<name>.ts`
-// exporting a `Command`, then register it here.
+// Keyed by slash command name. To add a command: create a
+// `src/commands/<name>.ts` exporting a `Command`, then register it here.
 export const commands: Record<string, Command> = {
   ping,
   play,
@@ -29,4 +30,5 @@ export const commands: Record<string, Command> = {
   stop_insurgency: stopInsurgency,
   status_insurgency: statusInsurgency,
   losowanie,
+  togif
 };

@@ -14,7 +14,7 @@ export class MinecraftServer {
       const result = await status(this.ip, this.port);
       return result.players.online;
     } catch (error) {
-      log.error(`Error fetching player count for ${this.name}:`, error);
+      // log.error(`Error fetching player count for ${this.name}:`, error);
       return 0;
     }
   }

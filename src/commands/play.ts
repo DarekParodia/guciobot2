@@ -11,8 +11,9 @@ export const play: Command = {
             .setName('play')
             .setDescription('Odtwarza piosenkę z YouTube.')
             .addStringOption(
-                option => option.setName('url').setDescription(
-                    'URL piosenki do odtworzenia.'))
+                option => option.setName('url')
+                              .setDescription('URL piosenki do odtworzenia.')
+                              .setRequired(true))
             .addStringOption(
                 option => option.setName('start').setDescription(
                     'Początkowy timestamp (np. 1:23 lub 90 sekund).')),
@@ -42,9 +43,12 @@ export const play: Command = {
     if (songsToAdd.length === 1) {
       interaction.editReply(
           added > 0 ?
-              `Piosenka **${songsToAdd[0]!.title}** została dodana do kolejki. Piosenki w kolejce: **${
+              `Piosenka **${
+                  songsToAdd[0]!
+                      .title}** została dodana do kolejki. Piosenki w kolejce: **${
                   queueManager.getQueueSize()}**.` :
-              `Kolejka jest pełna (limit **${queueManager.getQueueSize()}** piosenek).`);
+              `Kolejka jest pełna (limit **${
+                  queueManager.getQueueSize()}** piosenek).`);
     } else {
       interaction.editReply(
           skipped > 0 ?
