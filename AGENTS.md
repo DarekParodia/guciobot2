@@ -88,20 +88,24 @@ src/presence.ts          rotatePresence(client) — cycles the bot's Discord act
 src/commands/
   index.ts             the `commands` registry — add new commands here
   types.ts             the `Command` interface
-  utils.ts              getVoiceChannel(), resolveSongsToAdd() (shared by play/playnext)
-  ping.ts play.ts playnext.ts skip.ts queue.ts nowplaying.ts shuffle.ts clearlist.ts
+  utils.ts              getVoiceChannel(), resolveSongsToAdd(),
+                          attachNowPlayingNotifications() (shared by play/playnext/search)
+  ping.ts play.ts playnext.ts skip.ts queue.ts nowplaying.ts shuffle.ts clearlist.ts search.ts
   startInsurgency.ts stopInsurgency.ts statusInsurgency.ts
                         one file per slash command
 
 src/stream/
-  index.ts             public barrel: YtVideo type, queueManager, resolveVideos
+  index.ts             public barrel: YtVideo/SearchSource types, queueManager,
+                          resolveVideos, searchVideos
   queueManager.ts       owns queue state + current stream (the only mutable playback state)
                           enforces config.maxQueueSize
   youtubeStream.ts       yt-dlp | ffmpeg -> Discord audio resource, for one video
                           (handles stream backpressure, awaitable stop())
   metadata.ts             resolveVideos(url, limit): one yt-dlp call, handles
                             both single videos and playlists (capped by `limit`)
-  types.ts                 YtVideo interface
+                          searchVideos(query, source, limit): yt-dlp ytsearchN:/
+                            scsearchN: pseudo-URLs, used by /search
+  types.ts                 YtVideo interface, SearchSource ('youtube'|'soundcloud')
 
 src/api/
   index.ts             Hono app + Bun.serve startup (API_HOST/API_PORT):
@@ -216,8 +220,14 @@ RULES.md.
 ## Slash commands
 
 `ping`, `play`, `playnext`, `skip`, `kolejka` (queue), `coleci` (now
-playing), `shuffle`, `clearlist`, `start_insurgency`, `stop_insurgency`,
+playing), `shuffle`, `clearlist`, `search`, `start_insurgency`, `stop_insurgency`,
 `status_insurgency`. User-facing replies are Polish.
+
+`search` (query + optional source: YouTube/SoundCloud) shows up to 10 results
+in a multi-select menu + confirm/cancel buttons (via a
+`createMessageComponentCollector`, same pattern as `losowanie.ts`); only the
+invoking user can interact with it. Confirming enqueues the chosen tracks the
+same way `/play` does.
 
 `start_insurgency`/`stop_insurgency` require the invoking user's Discord ID
 to be in `allowedUserIds` in `config.json`; `status_insurgency` is

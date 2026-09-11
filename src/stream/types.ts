@@ -1,3 +1,5 @@
+export type SearchSource = 'youtube'|'soundcloud';
+
 export interface YtVideo {
   url: string;
   title: string;

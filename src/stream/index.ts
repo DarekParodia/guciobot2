@@ -1,3 +1,3 @@
-export type {YtVideo} from './types';
-export {resolveVideos} from './metadata';
+export type {SearchSource, YtVideo} from './types';
+export {resolveVideos, searchVideos} from './metadata';
 export {queueManager} from './queueManager';

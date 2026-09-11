@@ -24,6 +24,11 @@ export interface InsurgencyConfig {
   rconHost?: string;
   rconPort?: number;
   rconPassword?: string;
+  // Optional: auto-stop the container after this many minutes with nobody
+  // on the server. Requires gameServerHost/gameServerQueryPort (used to
+  // determine the live player count) — a no-op otherwise. Defaults to 60
+  // if not set. See src/insurgency/autoShutdown.ts.
+  autoShutdownIdleMinutes?: number;
 }
 
 const CONFIG_PATH = join(import.meta.dir, '..', '..', 'config.json');
@@ -96,6 +101,9 @@ export function getInsurgencyConfig(): InsurgencyConfig {
   if (hasRconPassword && typeof c.rconPassword !== 'string') {
     throw new Error('config.json: "rconPassword" musi być stringiem.');
   }
+  if (c.autoShutdownIdleMinutes !== undefined && typeof c.autoShutdownIdleMinutes !== 'number') {
+    throw new Error('config.json: "autoShutdownIdleMinutes" musi być liczbą.');
+  }
 
   cached = {
     proxmoxNode: String(c.proxmoxNode),
@@ -109,6 +117,7 @@ export function getInsurgencyConfig(): InsurgencyConfig {
     rconHost: c.rconHost as string | undefined,
     rconPort: c.rconPort as number | undefined,
     rconPassword: c.rconPassword as string | undefined,
+    autoShutdownIdleMinutes: c.autoShutdownIdleMinutes as number | undefined,
   };
   return cached;
 }

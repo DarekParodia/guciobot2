@@ -10,6 +10,7 @@
     "gameServerQueryPort": 27131,
     "rconHost": "192.168.2.20",
     "rconPort": 27015,
-    "rconPassword": "changeme"
+    "rconPassword": "changeme",
+    "autoShutdownIdleMinutes": 60
   }
 }

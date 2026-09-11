@@ -17,6 +17,27 @@ export function getVoiceChannel(interaction: ChatInputCommandInteraction) {
       null;
 }
 
+// Wires up the "now playing" notification (and end-of-song log) for videos
+// about to be enqueued — shared by any command that adds songs to the
+// queue, whether resolved from a URL or picked from search results.
+export function attachNowPlayingNotifications(
+    interaction: ChatInputCommandInteraction, songs: YtVideo[]) {
+  for (const video of songs) {
+    video.onStart = async () => {
+      const channel = await interaction.client.channels.fetch(interaction.channelId);
+      if (!channel || !channel.isTextBased() || channel.isDMBased()) {
+        log.warn(`Nie można znaleźć kanału tekstowego o ID: ${interaction.channelId}`);
+        return;
+      }
+      await channel.send(
+          `Teraz leci: **${video.title}** (${video.durationString}).`);
+    };
+    video.onEnd = async () => {
+      log.info(`Finished playing: ${video.title}`);
+    };
+  }
+}
+
 // Shared by /play and /playnext: resolves the `url` option to one or more
 // YtVideo entries (expanding playlists), applies the `start` timestamp
 // option when given, and wires up the "now playing" notification.
@@ -32,21 +53,7 @@ export async function resolveSongsToAdd(
     }
   }
 
-  for (const video of songs) {
-    video.onStart = async () => {
-      const channel = await interaction.client.channels.fetch(interaction.channelId);
-      if (!channel || !channel.isTextBased() || channel.isDMBased()) {
-        log.warn(`Nie można znaleźć kanału tekstowego o ID: ${interaction.channelId}`);
-        return;
-      }
-      await channel.send(
-          `Teraz leci: **${video.title}** (${video.durationString}).`);
-    };
-    video.onEnd = async () => {
-      log.info(`Finished playing: ${video.title}`);
-    };
-  }
-
+  attachNowPlayingNotifications(interaction, songs);
   return songs;
 }
 

@@ -4,6 +4,7 @@ import type {VoiceBasedChannel} from 'discord.js';
 
 import {commands} from './commands';
 import {config} from './config';
+import {checkAutoShutdown} from './insurgency/autoShutdown';
 import {handleStatusPanelButton, initStatusPanel, refreshStatusPanel} from './insurgency/statusPanel';
 import {createLogger} from './logger';
 import {rotatePresence} from './presence';
@@ -51,6 +52,7 @@ class DiscordBotClass {
       // see src/insurgency/statusPanel.ts.
       await initStatusPanel(this.client);
       setInterval(() => refreshStatusPanel(), config.statusUpdateIntervalMs);
+      setInterval(() => checkAutoShutdown(), config.statusUpdateIntervalMs);
     });
 
     this.client.on('interactionCreate', async (interaction) => {
