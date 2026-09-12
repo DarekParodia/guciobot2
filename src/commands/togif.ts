@@ -284,7 +284,8 @@ async function downloadAttachment(url: string, path: string): Promise<void> {
 
 async function generateGif(
     interaction: ChatInputCommandInteraction, attachment: Attachment,
-    fps: number, singleFrame: boolean, progress: ProgressReporter) {
+    fps: number, singleFrame: boolean, progress: ProgressReporter,
+    startedAt: number) {
   const workDir = await mkdtemp(join(tmpdir(), 'togif-'));
   try {
     progress.update('Pobieram plik...');
@@ -320,7 +321,7 @@ async function generateGif(
 
     while (width !== null && attempts.length < MAX_TRIES) {
       // Measured from the invocation, so time spent queued counts too.
-      if (Date.now() - interaction.createdTimestamp > SEARCH_BUDGET_MS) {
+      if (performance.now() - startedAt > SEARCH_BUDGET_MS) {
         log.warn('Search budget exceeded, stopping early');
         break;
       }
@@ -398,6 +399,16 @@ export const togif: Command = {
                                 .setMaxValue(30)
                                 .setMinValue(5)),
   execute: async (interaction) => {
+    // Time budget runs on the local monotonic clock. Don't compare Date.now()
+    // with interaction.createdTimestamp: that one comes from Discord's clock,
+    // and a host clock that's off by minutes would break the budget outright.
+    const startedAt = performance.now();
+    const clockSkewMs = Date.now() - interaction.createdTimestamp;
+    if (Math.abs(clockSkewMs) > 60 * 1000) {
+      log.warn(`Host clock differs from Discord's by ~${
+          Math.round(clockSkewMs / 1000)}s — check NTP/time sync`);
+    }
+
     const attachment = interaction.options.getAttachment('media');
     const fps = interaction.options.getNumber('fps') ?? DEFAULT_FPS;
 
@@ -436,7 +447,8 @@ export const togif: Command = {
                                 ahead < 5 ? 'gify' :
                                             'gifów'}...`),
           () => generateGif(
-              interaction, attachment, fps, singleFrame, progress));
+              interaction, attachment, fps, singleFrame, progress,
+              startedAt));
     } catch (e) {
       log.error('Error while generating GIF:', e);
       await progress.close();
