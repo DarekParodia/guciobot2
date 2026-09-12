@@ -1,9 +1,12 @@
 import {AttachmentBuilder, SlashCommandBuilder} from 'discord.js';
-import type {ChatInputCommandInteraction} from 'discord.js';
+import type {Attachment, ChatInputCommandInteraction} from 'discord.js';
 import {spawn} from 'node:child_process';
-import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
+import {createWriteStream} from 'node:fs';
+import {mkdtemp, readFile, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {extname, join, parse} from 'node:path';
+import {Readable} from 'node:stream';
+import {pipeline} from 'node:stream/promises';
 
 import {createLogger} from '../logger';
 
@@ -17,14 +20,19 @@ const MAX_GIF_SIZE = 9.5 * 1000000;
 const ACCEPTABLE_MARGIN = 1.0 * 1000000;
 // Size the width search aims for: the middle of the acceptable band.
 const TARGET_GIF_SIZE = MAX_GIF_SIZE - ACCEPTABLE_MARGIN / 2;
+// The input is stored in os.tmpdir(), which is often a RAM-backed tmpfs.
+const MAX_INPUT_SIZE = 100 * 1000000;
 const MAX_TRIES = 8;
 const MIN_WIDTH = 16;
 const DEFAULT_FPS = 15;
 const PALETTE_COLORS = 256;
+// Fewer decoder threads means fewer frames buffered at once; GIF encoding is
+// single-threaded anyway, so this costs next to no speed.
+const FFMPEG_THREADS = '2';
 // A single ffmpeg run that takes longer than this is killed.
 const PROCESS_TIMEOUT_MS = 5 * 60 * 1000;
-// Interaction tokens expire after 15 minutes; stop searching well before that
-// and send the best GIF found so far.
+// Interaction tokens expire 15 minutes after the command was invoked; stop
+// searching well before that and send the best GIF found so far.
 const SEARCH_BUDGET_MS = 10 * 60 * 1000;
 const PROGRESS_EDIT_INTERVAL_MS = 1500;
 
@@ -41,8 +49,31 @@ interface Attempt {
   size: number;
 }
 
+type ProgressReporter = ReturnType<typeof createProgressReporter>;
+
 function formatMb(bytes: number): string {
   return `${(bytes / 1000000).toFixed(1)} MB`;
+}
+
+// Renders run one at a time: each ffmpeg run takes a couple hundred MB of
+// RAM, and concurrent /togif calls would multiply that.
+let renderChain: Promise<void> = Promise.resolve();
+let rendersInFlight = 0;
+
+async function withRenderSlot<T>(
+    onQueued: (ahead: number) => void, fn: () => Promise<T>): Promise<T> {
+  const ahead = rendersInFlight++;
+  if (ahead > 0) onQueued(ahead);
+  const previous = renderChain;
+  const slot = Promise.withResolvers<void>();
+  renderChain = slot.promise;
+  try {
+    await previous;
+    return await fn();
+  } finally {
+    rendersInFlight--;
+    slot.resolve();
+  }
 }
 
 // Runs a process to completion. Rejects on a non-zero exit (with the tail of
@@ -124,27 +155,36 @@ async function probeMedia(inputPath: string): Promise<MediaInfo> {
   };
 }
 
-// Renders the input to a GIF at the given width. `onProgress` gets the
-// fraction (0-1) of the output written so far; note ffmpeg reports nothing
-// until palettegen has consumed the whole input, so it starts late.
+// Renders the input to `outputPath` at the given width and returns the GIF's
+// size in bytes. Two passes on purpose: a single-pass
+// `split,palettegen,paletteuse` graph has to hold every decoded frame in RAM
+// until the palette is ready (~1.3GB for 27s of 1280x576), while two passes
+// stream frame by frame at a flat ~150MB. `onProgress` gets the fraction
+// (0-1) of the second pass done; the first pass can't report any.
 async function renderGif(
-    inputPath: string, outputPath: string, width: number, fps: number,
-    singleFrame: boolean, durationSeconds: number|null,
-    onProgress: (fraction: number) => void): Promise<Buffer> {
+    inputPath: string, workDir: string, outputPath: string, width: number,
+    fps: number, singleFrame: boolean, durationSeconds: number|null,
+    onProgress: (fraction: number) => void): Promise<number> {
+  const palettePath = join(workDir, 'palette.png');
   // min(iw, …) guarantees we never upscale, even if the probed width is off.
-  const filter = `[0:v]${singleFrame ? '' : `fps=${fps},`}scale='min(iw,${
-      width})':-1:flags=lanczos,split=2[main][palette];` +
-      `[palette]palettegen=max_colors=${PALETTE_COLORS}[colors];` +
-      `[main][colors]paletteuse`;
-
+  const prepare = `${singleFrame ? '' : `fps=${fps},`}scale='min(iw,${
+      width})':-1:flags=lanczos`;
   // Reading from a file (not stdin) lets ffmpeg seek, which MP4/MOV files
   // with the moov atom at the end (most phone recordings) require.
+  const input = ['-threads', FFMPEG_THREADS, '-i', inputPath];
+
+  await runProcess('ffmpeg', [
+    '-v', 'error', '-nostats', '-y', ...input, '-vf',
+    `${prepare},palettegen=max_colors=${PALETTE_COLORS}`, '-update', '1',
+    palettePath
+  ]);
+
   await runProcess(
       'ffmpeg',
       [
-        '-v', 'error', '-nostats', '-progress', 'pipe:1', '-y', '-i', inputPath,
-        '-filter_complex', filter, ...(singleFrame ? ['-frames:v', '1'] : []),
-        '-f', 'gif', outputPath
+        '-v', 'error', '-nostats', '-progress', 'pipe:1', '-y', ...input, '-i',
+        palettePath, '-filter_complex', `[0:v]${prepare}[x];[x][1:v]paletteuse`,
+        ...(singleFrame ? ['-frames:v', '1'] : []), '-f', 'gif', outputPath
       ],
       (line) => {
         if (!durationSeconds || !line.startsWith('out_time_us=')) return;
@@ -153,7 +193,7 @@ async function renderGif(
         onProgress(Math.min(1, Math.max(0, outTimeUs / (durationSeconds * 1e6))));
       });
 
-  return readFile(outputPath);
+  return (await stat(outputPath)).size;
 }
 
 // Picks the next width to try, or null once the search has converged.
@@ -233,12 +273,114 @@ function describeAttempts(attempts: Attempt[]): string[] {
           a.size <= MAX_GIF_SIZE ? '✅' : '❌ za duży'}`);
 }
 
-async function downloadAttachment(url: string): Promise<Buffer> {
+// Streams the attachment straight to disk instead of buffering it in memory.
+async function downloadAttachment(url: string, path: string): Promise<void> {
   const res = await fetch(url);
-  if (!res.ok) {
+  if (!res.ok || !res.body) {
     throw new Error(`Attachment download failed: HTTP ${res.status}`);
   }
-  return Buffer.from(await res.arrayBuffer());
+  await pipeline(Readable.fromWeb(res.body), createWriteStream(path));
+}
+
+async function generateGif(
+    interaction: ChatInputCommandInteraction, attachment: Attachment,
+    fps: number, singleFrame: boolean, progress: ProgressReporter) {
+  const workDir = await mkdtemp(join(tmpdir(), 'togif-'));
+  try {
+    progress.update('Pobieram plik...');
+    const ext = extname(attachment.name);
+    const inputPath =
+        join(workDir, `input${/^\.[a-z0-9]{1,5}$/i.test(ext) ? ext : ''}`);
+    const outputPath = join(workDir, 'output.gif');
+    await downloadAttachment(attachment.url, inputPath);
+
+    let media: MediaInfo;
+    try {
+      media = await probeMedia(inputPath);
+    } catch (err) {
+      log.warn(`Could not probe ${attachment.name}:`, err);
+      await progress.close();
+      await interaction.editReply(
+          'Nie umiem odczytać tego pliku — to na pewno zdjęcie albo filmik?');
+      return;
+    }
+
+    const header = `Generuję gifa z **${attachment.name}** (${media.width}×${
+        media.height}${
+        singleFrame || !media.durationSeconds ?
+            '' :
+            `, ${media.durationSeconds.toFixed(1)} s, ${fps} fps`})`;
+    log.info(`Rendering ${attachment.name}: ${media.width}x${
+        media.height}, duration ${media.durationSeconds}s, ${fps} fps`);
+
+    const attempts: Attempt[] = [];
+    let best: {width: number, gif: Buffer}|null = null;
+    let tooBigWidth = Infinity;
+    let width: number|null = media.width;
+
+    while (width !== null && attempts.length < MAX_TRIES) {
+      // Measured from the invocation, so time spent queued counts too.
+      if (Date.now() - interaction.createdTimestamp > SEARCH_BUDGET_MS) {
+        log.warn('Search budget exceeded, stopping early');
+        break;
+      }
+
+      const attemptWidth: number = width;
+      const status = (detail: string) => [
+        header, ...describeAttempts(attempts),
+        `⏳ Próba ${attempts.length + 1}: ${attemptWidth} px — ${detail}`
+      ].join('\n');
+
+      progress.update(status('analiza kolorów...'));
+      const size = await renderGif(
+          inputPath, workDir, outputPath, attemptWidth, fps, singleFrame,
+          media.durationSeconds,
+          (fraction) =>
+              progress.update(status(`${Math.round(fraction * 100)}%`)));
+
+      const attempt = {width: attemptWidth, size};
+      attempts.push(attempt);
+      log.info(`Attempt ${attempts.length}/${MAX_TRIES}: width ${
+          attemptWidth} -> ${formatMb(size)}`);
+
+      if (size <= MAX_GIF_SIZE) {
+        // Only GIFs that fit are loaded into memory; the next attempt
+        // overwrites outputPath.
+        best = {width: attemptWidth, gif: await readFile(outputPath)};
+        // Full resolution already fits: never try to make it bigger.
+        if (attemptWidth >= media.width) break;
+        if (size >= MAX_GIF_SIZE - ACCEPTABLE_MARGIN) break;
+      } else {
+        tooBigWidth = attemptWidth;
+      }
+
+      width = nextWidth(attempt, best?.width ?? 0, tooBigWidth, media.width);
+    }
+
+    await progress.close();
+
+    if (!best) {
+      await interaction.editReply([
+        header, ...describeAttempts(attempts),
+        attempts.length === 0 ?
+            'Za długo czekałem w kolejce, spróbuj ponownie.' :
+            'Nie udało się zmieścić gifa w limicie 10MB. Spróbuj z krótszym lub mniejszym plikiem.'
+      ].join('\n'));
+      return;
+    }
+
+    const replyAttachment = new AttachmentBuilder(
+        best.gif, {name: `${parse(attachment.name).name}.gif`});
+
+    await interaction.editReply({
+      content: `Gotowe! ${best.width}×${
+          Math.round(best.width * media.height / media.width)}, ${
+          formatMb(best.gif.length)} (prób: ${attempts.length})`,
+      files: [replyAttachment],
+    });
+  } finally {
+    await rm(workDir, {recursive: true, force: true});
+  }
 }
 
 export const togif: Command = {
@@ -268,6 +410,15 @@ export const togif: Command = {
       return;
     }
 
+    if (attachment.size > MAX_INPUT_SIZE) {
+      await interaction.reply({
+        content: `Plik jest za duży (${formatMb(attachment.size)}), max to ${
+            formatMb(MAX_INPUT_SIZE)}.`,
+        ephemeral: true
+      });
+      return;
+    }
+
     // Still images become a single-frame GIF; animated GIFs are treated like
     // video so they keep their animation.
     const contentType = attachment.contentType ?? '';
@@ -276,103 +427,21 @@ export const togif: Command = {
 
     await interaction.deferReply();
     const progress = createProgressReporter(interaction);
-    progress.update('Pobieram plik...');
 
-    const workDir = await mkdtemp(join(tmpdir(), 'togif-'));
     try {
-      const ext = extname(attachment.name);
-      const inputPath =
-          join(workDir, `input${/^\.[a-z0-9]{1,5}$/i.test(ext) ? ext : ''}`);
-      const outputPath = join(workDir, 'output.gif');
-      await writeFile(inputPath, await downloadAttachment(attachment.url));
-
-      let media: MediaInfo;
-      try {
-        media = await probeMedia(inputPath);
-      } catch (err) {
-        log.warn(`Could not probe ${attachment.name}:`, err);
-        await progress.close();
-        await interaction.editReply(
-            'Nie umiem odczytać tego pliku — to na pewno zdjęcie albo filmik?');
-        return;
-      }
-
-      const header = `Generuję gifa z **${attachment.name}** (${media.width}×${
-          media.height}${
-          singleFrame || !media.durationSeconds ?
-              '' :
-              `, ${media.durationSeconds.toFixed(1)} s, ${fps} fps`})`;
-      log.info(`Rendering ${attachment.name}: ${media.width}x${
-          media.height}, duration ${media.durationSeconds}s, ${fps} fps`);
-
-      const startedAt = Date.now();
-      const attempts: Attempt[] = [];
-      let best: {width: number, gif: Buffer}|null = null;
-      let tooBigWidth = Infinity;
-      let width: number|null = media.width;
-
-      while (width !== null && attempts.length < MAX_TRIES) {
-        const attemptWidth: number = width;
-        const status = (detail: string) => [
-          header, ...describeAttempts(attempts),
-          `⏳ Próba ${attempts.length + 1}: ${attemptWidth} px — ${detail}`
-        ].join('\n');
-
-        progress.update(status('przetwarzanie...'));
-        const gif = await renderGif(
-            inputPath, outputPath, attemptWidth, fps, singleFrame,
-            media.durationSeconds,
-            (fraction) =>
-                progress.update(status(`${Math.round(fraction * 100)}%`)));
-
-        const attempt = {width: attemptWidth, size: gif.length};
-        attempts.push(attempt);
-        log.info(`Attempt ${attempts.length}/${MAX_TRIES}: width ${
-            attemptWidth} -> ${formatMb(gif.length)}`);
-
-        if (gif.length <= MAX_GIF_SIZE) {
-          best = {width: attemptWidth, gif};
-          // Full resolution already fits: never try to make it bigger.
-          if (attemptWidth >= media.width) break;
-          if (gif.length >= MAX_GIF_SIZE - ACCEPTABLE_MARGIN) break;
-        } else {
-          tooBigWidth = attemptWidth;
-        }
-
-        if (Date.now() - startedAt > SEARCH_BUDGET_MS) {
-          log.warn('Search budget exceeded, stopping early');
-          break;
-        }
-
-        width = nextWidth(attempt, best?.width ?? 0, tooBigWidth, media.width);
-      }
-
-      await progress.close();
-
-      if (!best) {
-        await interaction.editReply([
-          header, ...describeAttempts(attempts),
-          'Nie udało się zmieścić gifa w limicie 10MB. Spróbuj z krótszym lub mniejszym plikiem.'
-        ].join('\n'));
-        return;
-      }
-
-      const replyAttachment = new AttachmentBuilder(
-          best.gif, {name: `${parse(attachment.name).name}.gif`});
-
-      await interaction.editReply({
-        content: `Gotowe! ${best.width}×${
-            Math.round(best.width * media.height / media.width)}, ${
-            formatMb(best.gif.length)} (prób: ${attempts.length})`,
-        files: [replyAttachment],
-      });
+      await withRenderSlot(
+          (ahead) => progress.update(
+              `Czekam w kolejce, przede mną ${ahead} ${
+                  ahead === 1 ? 'gif' :
+                                ahead < 5 ? 'gify' :
+                                            'gifów'}...`),
+          () => generateGif(
+              interaction, attachment, fps, singleFrame, progress));
     } catch (e) {
       log.error('Error while generating GIF:', e);
       await progress.close();
       await interaction.editReply(
           'Wystąpił błąd podczas generowania gifa. Spróbuj ponownie później.');
-    } finally {
-      await rm(workDir, {recursive: true, force: true});
     }
   },
 };
