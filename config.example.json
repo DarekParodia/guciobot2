@@ -1,4 +1,8 @@
 {
+  "save": {
+    "maxInputBytes": 268435456,
+    "memoryReserveBytes": 536870912
+  },
   "insurgency": {
     "proxmoxNode": "pve",
     "containerId": 105,

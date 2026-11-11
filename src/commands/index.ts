@@ -5,6 +5,7 @@ import {ping} from './ping';
 import {play} from './play';
 import {playnext} from './playnext';
 import {queue} from './queue';
+import {save} from './save';
 import {search} from './search';
 import {shuffle} from './shuffle';
 import {skip} from './skip';
@@ -32,5 +33,6 @@ export const commands: Record<string, Command> = {
   status_insurgency: statusInsurgency,
   losowanie,
   togif,
+  save,
   search
 };

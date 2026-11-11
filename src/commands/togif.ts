@@ -14,8 +14,8 @@ import type {Command} from './types';
 
 const log = createLogger('togif');
 
-// Discord's attachment limit is 10MB; keep a bit of headroom.
-const MAX_GIF_SIZE = 9.5 * 1000000;
+// Discord's attachment limit is 20MB; keep a bit of headroom.
+const MAX_GIF_SIZE = 19 * 1000000;
 // A GIF within this much of MAX_GIF_SIZE is "good enough" — stop searching.
 const ACCEPTABLE_MARGIN = 1.0 * 1000000;
 // Size the width search aims for: the middle of the acceptable band.

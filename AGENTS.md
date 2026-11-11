@@ -33,13 +33,15 @@ console.log(db.query('SELECT * FROM logs ORDER BY id DESC LIMIT 20').all());
 "
 ```
 
-Type-check (the only automated check in this repo):
+Type-check:
 
 ```bash
 bun x tsc -p tsconfig.json --noEmit
 ```
 
-There are no tests and no lint config. Manual verification = run the bot
+Save-specific checks: `bun test src/save` (Linux, writable tmpfs, yt-dlp,
+ffmpeg and ffprobe required; tests use local HTTP, never a real Discord token).
+There is no lint config. Manual verification = run the bot
 against a real Discord test guild/token and exercise the slash commands.
 
 ## Environment variables
@@ -61,7 +63,7 @@ All read through `src/config.ts`:
 ## `config.json`
 
 Host-specific, non-secret settings live in `config.json` at the repo root
-(gitignored — copy `config.example.json` and fill it in). Currently just the
+(gitignored — copy `config.example.json` and fill it in). The
 `insurgency` section: `proxmoxNode`, `containerId`, `minFreeRamMb`,
 `allowedUserIds`, `allowSelfSignedCert`, the optional `statusChannelId`
 (enables the status panel — see below), and the optional (must be set
@@ -69,6 +71,12 @@ together) `gameServerHost` + `gameServerQueryPort` (enables the live
 player-count field — see below). Loaded lazily by `src/insurgency/config.ts`
 — missing/invalid config only breaks the insurgency commands, not the rest
 of the bot.
+
+The optional `save` section is loaded lazily by `src/save/policy.ts` and
+defaults when absent: `maxInputBytes` (268435456), `memoryReserveBytes`
+(536870912), and optional absolute `tmpfsDir`. The directory must actually
+be tmpfs; media never falls back to regular disk. See README for admission
+and encoding limits. Invalid save settings only break `/save`.
 
 ## Architecture
 
@@ -93,6 +101,17 @@ src/commands/
   ping.ts play.ts playnext.ts skip.ts queue.ts nowplaying.ts shuffle.ts clearlist.ts search.ts
   startInsurgency.ts stopInsurgency.ts statusInsurgency.ts
                         one file per slash command
+  save.ts               /save Discord glue and throttled Polish progress
+  saveUpload.ts         message formatting and bounded attachment REST upload
+
+src/save/
+  policy.ts             lazy save config, exact byte limits, format/bitrate selection
+  resources.ts          verified tmpfs, host/cgroup RAM admission and monitoring
+  process.ts            bounded subprocess I/O, deadlines and process-group cleanup
+  media.ts              yt-dlp metadata/download, ffprobe, remux/two-pass encoding
+  service.ts            single save slot through upload, workspace ownership/shutdown
+  progress.ts           serialized/coalesced updates and final-response barrier
+  *.test.ts             focused checks using real local media tools and HTTP
 
 src/stream/
   index.ts             public barrel: YtVideo/SearchSource types, queueManager,
@@ -221,7 +240,17 @@ RULES.md.
 
 `ping`, `play`, `playnext`, `skip`, `kolejka` (queue), `coleci` (now
 playing), `shuffle`, `clearlist`, `search`, `start_insurgency`, `stop_insurgency`,
-`status_insurgency`. User-facing replies are Polish.
+`status_insurgency`, `save`. User-facing replies are Polish.
+
+`save` accepts one HTTP(S) video link and posts a complete MP4 strictly below
+20,000,000 bytes and the interaction's `attachmentSizeLimit`. It checks
+selected-track size estimates before downloading, enforces an aggregate
+actual-byte cap while streaming tracks to tmpfs, and preserves audio and
+display orientation. Compatible small media is reused/remuxed; other media
+uses two-pass H.264/AAC with at most one smaller retry. Only one save runs
+at a time, with no waiting queue. Save state is independent of music.
+`src/index.ts` awaits `shutdownSaves()` alongside Discord shutdown so spawned
+process groups are stopped and workspaces removed before exit.
 
 `search` (query + optional source: YouTube/SoundCloud) shows up to 10 results
 in a multi-select menu + confirm/cancel buttons (via a
